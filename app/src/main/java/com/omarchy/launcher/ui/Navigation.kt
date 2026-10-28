@@ -41,6 +41,7 @@ fun OmarchyNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 favoriteApps = uiState.favoriteApps,
+                appRepository = container.appRepository,
                 onLaunchApp = { app -> viewModel.onAppLaunched(app, context) },
                 onOpenDrawer = { navController.navigate(Routes.DRAWER) },
                 onOpenTerminal = { navController.navigate(Routes.TERMINAL) },
@@ -50,6 +51,7 @@ fun OmarchyNavHost(
         composable(Routes.DRAWER) {
             AppDrawerScreen(
                 apps = uiState.rankedApps,
+                appRepository = container.appRepository,
                 feedback = feedback,
                 query = query,
                 onQueryChanged = { viewModel.onSearchQueryChanged(it, context) },

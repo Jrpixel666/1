@@ -23,7 +23,10 @@ data class UsageEvent(val packageName: String, val timestampMillis: Long, val ho
 data class AutomationRule(
     val id: String,
     val name: String,
-    val triggerPackage: String,
+    val triggerType: String = "APP_OPENED", // see agent/AutomationTrigger.kt for the fixed set of values
+    val triggerPackage: String = "",
+    val triggerHour: Int = 0,
+    val triggerMinute: Int = 0,
     val actionType: String, // see AutomationAction.kt for the fixed set of values
     val actionArg: String = "",
     val enabled: Boolean = true,

@@ -48,6 +48,7 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
                 container.agentPreferences.log,
             ) { apps, usage, automationsEnabled, rules, log ->
                 val hour = currentHour()
+                container.syncTimeOfDayAlarms(rules, automationsEnabled)
                 LauncherUiState(
                     allApps = apps,
                     favoriteApps = AppRanker.favorites(apps, usage, hour),

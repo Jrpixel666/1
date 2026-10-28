@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,12 +34,15 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.omarchy.launcher.data.AppInfo
+import com.omarchy.launcher.data.AppRepository
+import com.omarchy.launcher.ui.common.AppIcon
 import com.omarchy.launcher.util.FuzzySearch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AppDrawerScreen(
     apps: List<AppInfo>,
+    appRepository: AppRepository,
     feedback: String?,
     onLaunchApp: (AppInfo) -> Unit,
     onQueryChanged: (String) -> Unit,
@@ -91,7 +95,13 @@ fun AppDrawerScreen(
                                     onLongClick = { menuForApp = app },
                                 )
                                 .padding(horizontal = 24.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            AppIcon(
+                                app = app,
+                                appRepository = appRepository,
+                                modifier = Modifier.size(28.dp).padding(end = 16.dp),
+                            )
                             Text(
                                 text = app.label,
                                 color = MaterialTheme.colorScheme.onBackground,

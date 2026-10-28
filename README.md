@@ -31,10 +31,12 @@ requests no `INTERNET` permission and makes no network calls anywhere in its sou
 1. **Usage-based app ranking** (`agent/AppRanker.kt`) - the favorites row and the drawer's sort
    order are driven by a score blending overall frequency, recency, and "same hour of day"
    frequency, so e.g. an app you always open at 7am surfaces itself at 7am.
-2. **Local automation engine** (`agent/AutomationEngine.kt`, `agent/AutomationAction.kt`) - a small
-   if-this-then-that system: "when app X opens, do Y" where Y is one of a fixed, auditable set of
-   actions (open another app, show the Wi-Fi/volume quick panel, start a timer, show a reminder
-   toast). Manage rules from Settings; every firing is written to...
+2. **Local automation engine** (`agent/AutomationEngine.kt`, `agent/AutomationAction.kt`,
+   `agent/TimeOfDayScheduler.kt`) - a small if-this-then-that system with two trigger types,
+   "app X opens" (handled reactively on launch) and "at HH:MM" (a daily, inexact `AlarmManager`
+   alarm that survives reboots), each firing one of a fixed, auditable set of actions (open
+   another app, show the Wi-Fi/volume quick panel, start a timer, show a reminder toast). Manage
+   rules from Settings; every firing is written to...
 3. **Agent activity log** (`ui/agent/AgentLogScreen.kt`) - a transparency log of every automation
    the agent has fired, so nothing happens silently.
 4. **Local command parser** (`agent/CommandParser.kt`) - the search bar also understands a small
@@ -104,11 +106,12 @@ app/src/main/java/com/omarchy/launcher/
   LauncherActivity.kt          - the HOME activity, nav host, back-press handling
   MainViewModel.kt             - shared state: app list, ranking, rules, search
   AppContainer.kt              - tiny manual DI container
-  agent/                       - ranking, automation engine/actions, command parser
+  agent/                       - ranking, automation engine/actions/triggers, alarm scheduling,
+                                  boot receiver, command parser
   data/                        - PackageManager wrapper, DataStore-backed prefs
   termux/                      - RUN_COMMAND dispatch + result receiver
   ui/
-    home/, drawer/             - launcher + app drawer screens
+    home/, drawer/             - launcher + app drawer screens (icons via ui/common/AppIcon.kt)
     terminal/                  - embedded terminal + Arch/proot controls
     settings/, agent/          - automation rules UI, activity log
     theme/                     - Omarchy palette/typography/shapes
@@ -133,9 +136,9 @@ minSdk 26 (Android 8.0), targetSdk/compileSdk 34.
 ## Known limitations
 
 - No app widgets on the home screen yet (would need `AppWidgetHost` integration).
-- No icon loading in the drawer list yet (labels only) - `AppRepository.loadIcon` exists but isn't
-  wired into the list UI.
-- The automation rule builder only supports one trigger type ("app X opened"); time-of-day
-  triggers, etc. would be a natural next step.
+- Automation rules support two trigger types - "app X opens" (reactive) and "time of day"
+  (a daily `AlarmManager` alarm per rule, rescheduled on boot via `BootCompletedReceiver`,
+  inexact on purpose so it needs no exact-alarm permission). Location/connectivity-change
+  triggers would be natural next additions.
 - Requires Termux + a one-time `allow-external-apps=true` opt-in for the Arch/proot features -
   this is an inherent Android platform constraint (see above), not a shortcut taken here.

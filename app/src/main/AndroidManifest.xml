@@ -12,6 +12,9 @@
     <uses-permission android:name="com.termux.permission.RUN_COMMAND"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Lets time-of-day automation alarms (AlarmManager, inexact) survive a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- Package visibility: discover installed, launchable apps for the drawer -->
     <queries>
         <intent>
@@ -48,6 +51,18 @@
         <receiver
             android:name=".termux.TermuxResultReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".agent.TimeOfDayAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".agent.BootCompletedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

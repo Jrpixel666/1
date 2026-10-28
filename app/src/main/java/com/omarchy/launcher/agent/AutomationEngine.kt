@@ -5,9 +5,11 @@ import com.omarchy.launcher.data.AutomationRule
 import kotlinx.coroutines.flow.first
 
 /**
- * Local "agent" #2: a small if-this-then-that engine. Trigger is always "app X was opened";
- * action is one of AutomationActionType. Every firing is written to the agent log so the
- * automations screen can show exactly what the agent did and why - nothing happens silently.
+ * Local "agent" #2: a small if-this-then-that engine. Two trigger types: "app X was opened"
+ * (handled here, reactively) and "time of day" (handled by TimeOfDayScheduler/AlarmManager,
+ * since it has to fire even while the launcher isn't in the foreground). Action is one of
+ * AutomationActionType. Every firing is written to the agent log so the automations screen can
+ * show exactly what the agent did and why - nothing happens silently.
  */
 class AutomationEngine(
     private val preferences: AgentPreferences,
@@ -26,7 +28,7 @@ class AutomationEngine(
         } catch (e: Exception) {
             emptyList<AutomationRule>()
         }
-        rules.filter { it.enabled && it.triggerPackage == packageName }
+        rules.filter { it.enabled && it.triggerType == AutomationTriggerType.APP_OPENED.id && it.triggerPackage == packageName }
             .forEach { rule -> fire(rule) }
     }
 

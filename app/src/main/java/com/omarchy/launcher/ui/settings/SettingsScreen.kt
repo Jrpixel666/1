@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.omarchy.launcher.agent.AutomationActionType
+import com.omarchy.launcher.agent.AutomationTriggerType
 import com.omarchy.launcher.data.AppInfo
 import com.omarchy.launcher.data.AutomationRule
 import java.util.UUID
@@ -93,7 +94,7 @@ fun SettingsScreen(
                         Column {
                             Text(rule.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
                             Text(
-                                "when ${appLabel(apps, rule.triggerPackage)} opens -> ${AutomationActionType.fromId(rule.actionType)?.label ?: rule.actionType}",
+                                "${triggerDescription(apps, rule)} -> ${AutomationActionType.fromId(rule.actionType)?.label ?: rule.actionType}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -122,14 +123,24 @@ fun SettingsScreen(
 private fun appLabel(apps: List<AppInfo>, packageName: String): String =
     apps.firstOrNull { it.packageName == packageName }?.label ?: packageName
 
+private fun triggerDescription(apps: List<AppInfo>, rule: AutomationRule): String =
+    when (AutomationTriggerType.fromId(rule.triggerType)) {
+        AutomationTriggerType.APP_OPENED -> "when ${appLabel(apps, rule.triggerPackage)} opens"
+        AutomationTriggerType.TIME_OF_DAY -> "at %02d:%02d".format(rule.triggerHour, rule.triggerMinute)
+    }
+
 @Composable
 private fun AddRuleDialog(
     apps: List<AppInfo>,
     onDismiss: () -> Unit,
     onConfirm: (AutomationRule) -> Unit,
 ) {
+    var triggerType by remember { mutableStateOf(AutomationTriggerType.APP_OPENED) }
+    var triggerTypeMenuExpanded by remember { mutableStateOf(false) }
     var triggerApp by remember { mutableStateOf<AppInfo?>(apps.firstOrNull()) }
     var triggerMenuExpanded by remember { mutableStateOf(false) }
+    var triggerHourText by remember { mutableStateOf("8") }
+    var triggerMinuteText by remember { mutableStateOf("0") }
     var actionType by remember { mutableStateOf(AutomationActionType.TOAST) }
     var actionMenuExpanded by remember { mutableStateOf(false) }
     var actionArg by remember { mutableStateOf("") }
@@ -141,15 +152,45 @@ private fun AddRuleDialog(
         title = { Text("New automation") },
         text = {
             Column {
-                Text("When this app opens:", style = MaterialTheme.typography.bodySmall)
+                Text("Trigger:", style = MaterialTheme.typography.bodySmall)
                 Box {
-                    OutlinedButton(onClick = { triggerMenuExpanded = true }) {
-                        Text(triggerApp?.label ?: "choose app")
+                    OutlinedButton(onClick = { triggerTypeMenuExpanded = true }) {
+                        Text(triggerType.label)
                     }
-                    DropdownMenu(expanded = triggerMenuExpanded, onDismissRequest = { triggerMenuExpanded = false }) {
-                        apps.take(100).forEach { app ->
-                            DropdownMenuItem(text = { Text(app.label) }, onClick = { triggerApp = app; triggerMenuExpanded = false })
+                    DropdownMenu(expanded = triggerTypeMenuExpanded, onDismissRequest = { triggerTypeMenuExpanded = false }) {
+                        AutomationTriggerType.entries.forEach { type ->
+                            DropdownMenuItem(text = { Text(type.label) }, onClick = { triggerType = type; triggerTypeMenuExpanded = false })
                         }
+                    }
+                }
+
+                if (triggerType == AutomationTriggerType.APP_OPENED) {
+                    Box(modifier = Modifier.padding(top = 8.dp)) {
+                        OutlinedButton(onClick = { triggerMenuExpanded = true }) {
+                            Text(triggerApp?.label ?: "choose app")
+                        }
+                        DropdownMenu(expanded = triggerMenuExpanded, onDismissRequest = { triggerMenuExpanded = false }) {
+                            apps.take(100).forEach { app ->
+                                DropdownMenuItem(text = { Text(app.label) }, onClick = { triggerApp = app; triggerMenuExpanded = false })
+                            }
+                        }
+                    }
+                } else {
+                    Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = triggerHourText,
+                            onValueChange = { triggerHourText = it.filter(Char::isDigit).take(2) },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("hour (0-23)") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = triggerMinuteText,
+                            onValueChange = { triggerMinuteText = it.filter(Char::isDigit).take(2) },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("min (0-59)") },
+                            singleLine = true,
+                        )
                     }
                 }
 
@@ -189,18 +230,33 @@ private fun AddRuleDialog(
         },
         confirmButton = {
             Button(onClick = {
-                val trigger = triggerApp ?: return@Button
                 val arg = if (actionType == AutomationActionType.OPEN_APP) (openAppTarget?.packageName ?: "") else actionArg
                 if (actionType.needsArg && arg.isBlank()) return@Button
-                onConfirm(
+
+                val rule = if (triggerType == AutomationTriggerType.APP_OPENED) {
+                    val trigger = triggerApp ?: return@Button
                     AutomationRule(
                         id = UUID.randomUUID().toString(),
                         name = "${trigger.label} -> ${actionType.label}",
+                        triggerType = AutomationTriggerType.APP_OPENED.id,
                         triggerPackage = trigger.packageName,
                         actionType = actionType.id,
                         actionArg = arg,
                     )
-                )
+                } else {
+                    val hour = (triggerHourText.toIntOrNull() ?: 8).coerceIn(0, 23)
+                    val minute = (triggerMinuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
+                    AutomationRule(
+                        id = UUID.randomUUID().toString(),
+                        name = "%02d:%02d -> %s".format(hour, minute, actionType.label),
+                        triggerType = AutomationTriggerType.TIME_OF_DAY.id,
+                        triggerHour = hour,
+                        triggerMinute = minute,
+                        actionType = actionType.id,
+                        actionArg = arg,
+                    )
+                }
+                onConfirm(rule)
             }) { Text("Create") }
         },
         dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } },
