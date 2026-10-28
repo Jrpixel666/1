@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      No INTERNET permission is requested anywhere in this app.
+      Every "agentic" feature (usage ranking, automations, NL command
+      parsing) runs entirely on-device. The only outbound actions this
+      app ever triggers are local Intents to other installed apps
+      (e.g. Termux) which the user explicitly invokes.
+    -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Package visibility: discover installed, launchable apps for the drawer -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <package android:name="com.termux" />
+    </queries>
+
+    <application
+        android:name=".OmarchyLauncherApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.OmarchyLauncher"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:resizeableActivity="true"
+            android:screenOrientation="unspecified"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:theme="@style/Theme.OmarchyLauncher.Home">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".termux.TermuxResultReceiver"
+            android:exported="false" />
+
+    </application>
+
+</manifest>
