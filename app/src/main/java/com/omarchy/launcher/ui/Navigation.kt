@@ -20,6 +20,10 @@ import com.omarchy.launcher.ui.terminal.TerminalScreen
 import com.omarchy.launcher.ui.widgets.WidgetEditorScreen
 import com.omarchy.launcher.ui.widgets.WidgetsScreen
 import com.omarchy.launcher.ui.widgets.WidgetsViewModel
+import android.appwidget.AppWidgetProviderInfo
+import com.omarchy.launcher.ui.nativewidgets.NativeWidgetPickerScreen
+import com.omarchy.launcher.ui.nativewidgets.NativeWidgetsScreen
+import com.omarchy.launcher.ui.nativewidgets.NativeWidgetsViewModel
 
 object Routes {
     const val HOME = "home"
@@ -29,6 +33,8 @@ object Routes {
     const val AGENT_LOG = "agent_log"
     const val WIDGETS = "widgets"
     const val WIDGET_EDITOR = "widget_editor/{fileName}"
+    const val NATIVE_WIDGETS = "native_widgets"
+    const val NATIVE_WIDGET_PICKER = "native_widget_picker"
 
     fun widgetEditor(fileName: String) = "widget_editor/$fileName"
 }
@@ -37,6 +43,7 @@ object Routes {
 fun OmarchyNavHost(
     container: AppContainer,
     onRequestTermuxPermission: () -> Unit,
+    onRequestAddNativeWidget: (AppWidgetProviderInfo) -> Unit,
     navController: NavHostController = rememberNavController(),
 ) {
     val context = LocalContext.current
@@ -52,6 +59,8 @@ fun OmarchyNavHost(
                 appRepository = container.appRepository,
                 widgetRepository = container.widgetRepository,
                 widgetPreferences = container.widgetPreferences,
+                nativeWidgetPreferences = container.nativeWidgetPreferences,
+                nativeWidgetHostManager = container.nativeWidgetHostManager,
                 onWidgetAction = { action -> action.perform(context, container.appRepository) },
                 onLaunchApp = { app -> viewModel.onAppLaunched(app, context) },
                 onOpenDrawer = { navController.navigate(Routes.DRAWER) },
@@ -94,6 +103,7 @@ fun OmarchyNavHost(
                 onOpenAgentLog = { navController.navigate(Routes.AGENT_LOG) },
                 onOpenTerminal = { navController.navigate(Routes.TERMINAL) },
                 onOpenWidgets = { navController.navigate(Routes.WIDGETS) },
+                onOpenNativeWidgets = { navController.navigate(Routes.NATIVE_WIDGETS) },
             )
         }
         composable(Routes.AGENT_LOG) {
@@ -122,6 +132,31 @@ fun OmarchyNavHost(
                 initialContent = remember(fileName) { widgetsViewModel.readContent(fileName) },
                 onBack = { navController.popBackStack() },
                 onSave = { name, content -> widgetsViewModel.saveContent(name, content) },
+            )
+        }
+        composable(Routes.NATIVE_WIDGETS) {
+            val nativeViewModel: NativeWidgetsViewModel = viewModel(factory = NativeWidgetsViewModel.factory(container))
+            val nativeState by nativeViewModel.uiState.collectAsState()
+            NativeWidgetsScreen(
+                activeIds = nativeState.activeIds,
+                getAppWidgetInfo = nativeViewModel::getAppWidgetInfo,
+                onBack = { navController.popBackStack() },
+                onAddNew = { navController.navigate(Routes.NATIVE_WIDGET_PICKER) },
+                onRemove = nativeViewModel::remove,
+                onMoveUp = nativeViewModel::moveUp,
+                onMoveDown = nativeViewModel::moveDown,
+            )
+        }
+        composable(Routes.NATIVE_WIDGET_PICKER) {
+            val nativeViewModel: NativeWidgetsViewModel = viewModel(factory = NativeWidgetsViewModel.factory(container))
+            val nativeState by nativeViewModel.uiState.collectAsState()
+            NativeWidgetPickerScreen(
+                providers = nativeState.providers,
+                onBack = { navController.popBackStack() },
+                onPick = { provider ->
+                    onRequestAddNativeWidget(provider)
+                    navController.popBackStack(Routes.NATIVE_WIDGETS, inclusive = false)
+                },
             )
         }
     }

@@ -25,10 +25,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.omarchy.launcher.data.AppInfo
 import com.omarchy.launcher.data.AppRepository
+import com.omarchy.launcher.data.NativeWidgetPreferences
 import com.omarchy.launcher.data.WidgetPreferences
 import com.omarchy.launcher.data.WidgetRepository
+import com.omarchy.launcher.nativewidgets.NativeWidgetHostManager
 import com.omarchy.launcher.ui.common.AppIcon
 import com.omarchy.launcher.ui.common.OmarchyTopBar
+import com.omarchy.launcher.ui.nativewidgets.ActiveNativeWidgetsSection
 import com.omarchy.launcher.ui.widgets.ActiveWidgetsSection
 import com.omarchy.launcher.widgets.WidgetAction
 
@@ -38,6 +41,8 @@ fun HomeScreen(
     appRepository: AppRepository,
     widgetRepository: WidgetRepository,
     widgetPreferences: WidgetPreferences,
+    nativeWidgetPreferences: NativeWidgetPreferences,
+    nativeWidgetHostManager: NativeWidgetHostManager,
     onWidgetAction: (WidgetAction) -> Unit,
     onLaunchApp: (AppInfo) -> Unit,
     onOpenDrawer: () -> Unit,
@@ -68,20 +73,28 @@ fun HomeScreen(
                 }
             }
 
-            ActiveWidgetsSection(
-                widgetRepository = widgetRepository,
-                widgetPreferences = widgetPreferences,
-                onAction = onWidgetAction,
-            )
-
-            Text(
-                text = "favorites",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
-            )
-
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                item {
+                    ActiveWidgetsSection(
+                        widgetRepository = widgetRepository,
+                        widgetPreferences = widgetPreferences,
+                        onAction = onWidgetAction,
+                    )
+                }
+                item {
+                    ActiveNativeWidgetsSection(
+                        nativeWidgetPreferences = nativeWidgetPreferences,
+                        hostManager = nativeWidgetHostManager,
+                    )
+                }
+                item {
+                    Text(
+                        text = "favorites",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
+                    )
+                }
                 items(favoriteApps, key = { it.key }) { app ->
                     FavoriteRow(app = app, appRepository = appRepository, onClick = { onLaunchApp(app) })
                 }

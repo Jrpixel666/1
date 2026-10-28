@@ -78,10 +78,35 @@ correctly in one pass, so what's here is a **scoped subset in the same spirit**,
 **Deliberately not included** (OWL has all of this; this subset doesn't): `cmd()`/`http()`/stream
 data sources, `state`/`persist`/`let`, `Grid`/`Flow`/`Image`/`Progress`/`Ring`/`Sparkline`/
 `Canvas`/`Shader`/`Terminal` nodes, `onDrag`, a widget marketplace, and the multi-page/6-column
-drag-and-drop grid (widgets here are a simple ordered vertical stack instead). A next step some
-day: real Android `AppWidgetHost`/`AppWidgetManager` support alongside this, so existing
-installed widgets (clock, weather, calendar apps) could be placed too - a separate, much simpler
-mechanism that can't do what a declarative widget can, but needs no custom language at all.
+drag-and-drop grid (widgets here are a simple ordered vertical stack instead).
+
+## Native Android widgets
+
+Alongside the OWL-inspired `.owl` widgets above, Settings -> native widgets hosts **real**
+installed Android widgets (a clock, weather, calendar, anything any app offers) via the actual
+platform framework, `AppWidgetHost`/`AppWidgetManager` - no custom language, no parsing, the
+genuine system mechanism every launcher uses:
+
+- `nativewidgets/NativeWidgetHostManager.kt` wraps one `AppWidgetHost` for the app (id allocation,
+  `createView`, delete, `startListening()`/`stopListening()` tied to `LauncherActivity`'s
+  `onResume`/`onPause`), and lists installed home-screen-capable providers.
+- Adding one is the standard third-party-launcher flow, since normal apps don't hold the
+  restricted `BIND_APPWIDGET` permission: allocate an id, try a dialog-free
+  `bindAppWidgetIdIfAllowed` first, and if that's refused (the common case), launch the system's
+  own `ACTION_APPWIDGET_BIND` confirmation dialog, then `ACTION_APPWIDGET_CONFIGURE` if the widget
+  has a config screen - all coordinated in `LauncherActivity` via `registerForActivityResult`
+  (`ui/nativewidgets/NativeWidgetPickerScreen.kt` is just the chooser; the actual bind/configure
+  round-trip needs an Activity, not a ViewModel). No extra manifest permission is needed - that's
+  the point of the confirmation-dialog mechanism.
+- The resulting `AppWidgetHostView` is a classic Android `View`, rendered inside Compose via
+  `AndroidView` (`ui/nativewidgets/NativeWidgetHostComposable.kt`).
+- Active widget IDs and their order persist via `data/NativeWidgetPreferences.kt` and survive
+  restarts (the IDs stay valid at the system level); management (reorder/remove) is
+  `ui/nativewidgets/NativeWidgetsScreen.kt`.
+
+Native widgets render below the OWL ones, in the same scrollable column as the favorites list -
+both widget sections and favorites now share one `LazyColumn` on the home screen, so a long
+widget stack scrolls instead of squeezing favorites off-screen.
 
 ## Arch Linux ARM in proot
 
@@ -146,11 +171,13 @@ app/src/main/java/com/omarchy/launcher/
   termux/                      - RUN_COMMAND dispatch + result receiver
   widgets/                     - OwlNode/OwlParser (the scoped widget format), OwlRenderer,
                                   LiveValues (${clock}/${date}/${battery}), WidgetAction
+  nativewidgets/               - NativeWidgetHostManager (AppWidgetHost/AppWidgetManager wrapper)
   ui/
     home/, drawer/             - launcher + app drawer screens (icons via ui/common/AppIcon.kt)
     terminal/                  - embedded terminal + Arch/proot controls
     settings/, agent/          - automation rules UI, activity log
-    widgets/                   - widget list/editor screens, home-screen widget section
+    widgets/                   - .owl widget list/editor screens, home-screen widget section
+    nativewidgets/             - native widget picker/management screens, AndroidView host
     theme/                     - Omarchy palette/typography/shapes
   assets/
     termux/                    - install_archlinux_arm.sh, omarchy_theme.sh
@@ -175,14 +202,15 @@ minSdk 26 (Android 8.0), targetSdk/compileSdk 34.
 
 ## Known limitations
 
-- Widgets are an OWL-*inspired* scoped subset, not a port - see "Deliberately not included"
-  above. Native Android `AppWidgetHost` support (so existing installed widgets - clock, weather,
-  calendar apps - can be placed too) is a tracked, not-yet-built follow-up.
+- The `.owl` widgets are an OWL-*inspired* scoped subset, not a port - see "Deliberately not
+  included" above. Native `AppWidgetHost` widgets (previously tracked as a follow-up) are now
+  built, as a separate section - see "Native Android widgets" above.
 - Automation rules support two trigger types - "app X opens" (reactive) and "time of day"
   (a daily `AlarmManager` alarm per rule, rescheduled on boot via `BootCompletedReceiver`,
   inexact on purpose so it needs no exact-alarm permission). Location/connectivity-change
   triggers would be natural next additions.
 - Requires Termux + a one-time `allow-external-apps=true` opt-in for the Arch/proot features -
   this is an inherent Android platform constraint (see above), not a shortcut taken here.
-- If several active widgets are tall, they can push the favorites list down (the home screen's
-  widget section isn't independently scrollable yet).
+- Native widgets haven't been exercised against a widget with an unusual `minResizeWidth`/
+  resize mode, or a keyguard-only provider filtered out by `WIDGET_CATEGORY_HOME_SCREEN` - common
+  widgets (clock, weather, calendar) are the tested target.

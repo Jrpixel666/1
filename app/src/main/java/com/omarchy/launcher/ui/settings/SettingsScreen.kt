@@ -1,5 +1,6 @@
 package com.omarchy.launcher.ui.settings
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -51,6 +52,7 @@ fun SettingsScreen(
     onOpenAgentLog: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenWidgets: () -> Unit,
+    onOpenNativeWidgets: () -> Unit,
 ) {
     var showAddRule by remember { mutableStateOf(false) }
 
@@ -79,11 +81,18 @@ fun SettingsScreen(
                 Switch(checked = automationsEnabled, onCheckedChange = onAutomationsEnabledChanged)
             }
 
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedButton(onClick = { showAddRule = true }) { Text("+ add rule") }
                 OutlinedButton(onClick = onOpenAgentLog) { Text("agent log") }
                 OutlinedButton(onClick = onOpenTerminal) { Text("terminal") }
                 OutlinedButton(onClick = onOpenWidgets) { Text("widgets") }
+                OutlinedButton(onClick = onOpenNativeWidgets) { Text("native widgets") }
             }
 
             LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
