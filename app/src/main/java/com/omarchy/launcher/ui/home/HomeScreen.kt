@@ -25,13 +25,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.omarchy.launcher.data.AppInfo
 import com.omarchy.launcher.data.AppRepository
+import com.omarchy.launcher.data.WidgetPreferences
+import com.omarchy.launcher.data.WidgetRepository
 import com.omarchy.launcher.ui.common.AppIcon
 import com.omarchy.launcher.ui.common.OmarchyTopBar
+import com.omarchy.launcher.ui.widgets.ActiveWidgetsSection
+import com.omarchy.launcher.widgets.WidgetAction
 
 @Composable
 fun HomeScreen(
     favoriteApps: List<AppInfo>,
     appRepository: AppRepository,
+    widgetRepository: WidgetRepository,
+    widgetPreferences: WidgetPreferences,
+    onWidgetAction: (WidgetAction) -> Unit,
     onLaunchApp: (AppInfo) -> Unit,
     onOpenDrawer: () -> Unit,
     onOpenTerminal: () -> Unit,
@@ -60,6 +67,12 @@ fun HomeScreen(
                     )
                 }
             }
+
+            ActiveWidgetsSection(
+                widgetRepository = widgetRepository,
+                widgetPreferences = widgetPreferences,
+                onAction = onWidgetAction,
+            )
 
             Text(
                 text = "favorites",

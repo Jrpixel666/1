@@ -9,6 +9,8 @@ import com.omarchy.launcher.agent.TimeOfDayScheduler
 import com.omarchy.launcher.data.AgentPreferences
 import com.omarchy.launcher.data.AppRepository
 import com.omarchy.launcher.data.AutomationRule
+import com.omarchy.launcher.data.WidgetPreferences
+import com.omarchy.launcher.data.WidgetRepository
 import com.omarchy.launcher.termux.TermuxController
 
 /** Tiny manual DI container - no DI framework needed for an app this size. */
@@ -19,6 +21,8 @@ class AppContainer(private val context: Context) {
     val automationExecutor = AutomationExecutor(context, appRepository)
     val automationEngine = AutomationEngine(agentPreferences, automationExecutor)
     val commandParser = CommandParser(appRepository)
+    val widgetRepository = WidgetRepository(context).apply { ensureDefaultsInstalled() }
+    val widgetPreferences = WidgetPreferences(context)
 
     /** Keeps AlarmManager in sync with the current rule set / master automations switch. */
     fun syncTimeOfDayAlarms(rules: List<AutomationRule>, automationsEnabled: Boolean) {

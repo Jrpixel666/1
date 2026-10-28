@@ -1,0 +1,21 @@
+# A minimal clock + date widget. Tap it to open the app drawer... nothing, this one's read-only.
+widget {
+  size: "6x2"
+}
+
+Column {
+  padding: 16
+  spacing: 4
+
+  Text {
+    text: "${clock}"
+    size: 36
+    color: accent
+  }
+
+  Text {
+    text: "${date}"
+    size: 14
+    color: subtle
+  }
+}

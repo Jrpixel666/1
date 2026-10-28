@@ -1,0 +1,29 @@
+# Buttons that launch an app or open a URL. Edit the open(...) package name to point
+# at whatever you actually want a one-tap shortcut to.
+widget {
+  size: "6x1"
+}
+
+Row {
+  padding: 12
+  spacing: 8
+
+  Button {
+    text: "Settings"
+    onTap: open("com.android.settings")
+  }
+
+  Button {
+    text: "Termux"
+    onTap: open("com.termux")
+  }
+
+  Spacer {
+    weight: 1
+  }
+
+  Button {
+    text: "Docs"
+    onTap: url("https://github.com/SimonSchubert/omalauncher")
+  }
+}

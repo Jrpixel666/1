@@ -3,6 +3,7 @@ package com.omarchy.launcher.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -16,6 +17,9 @@ import com.omarchy.launcher.ui.drawer.AppDrawerScreen
 import com.omarchy.launcher.ui.home.HomeScreen
 import com.omarchy.launcher.ui.settings.SettingsScreen
 import com.omarchy.launcher.ui.terminal.TerminalScreen
+import com.omarchy.launcher.ui.widgets.WidgetEditorScreen
+import com.omarchy.launcher.ui.widgets.WidgetsScreen
+import com.omarchy.launcher.ui.widgets.WidgetsViewModel
 
 object Routes {
     const val HOME = "home"
@@ -23,6 +27,10 @@ object Routes {
     const val TERMINAL = "terminal"
     const val SETTINGS = "settings"
     const val AGENT_LOG = "agent_log"
+    const val WIDGETS = "widgets"
+    const val WIDGET_EDITOR = "widget_editor/{fileName}"
+
+    fun widgetEditor(fileName: String) = "widget_editor/$fileName"
 }
 
 @Composable
@@ -42,6 +50,9 @@ fun OmarchyNavHost(
             HomeScreen(
                 favoriteApps = uiState.favoriteApps,
                 appRepository = container.appRepository,
+                widgetRepository = container.widgetRepository,
+                widgetPreferences = container.widgetPreferences,
+                onWidgetAction = { action -> action.perform(context, container.appRepository) },
                 onLaunchApp = { app -> viewModel.onAppLaunched(app, context) },
                 onOpenDrawer = { navController.navigate(Routes.DRAWER) },
                 onOpenTerminal = { navController.navigate(Routes.TERMINAL) },
@@ -82,10 +93,36 @@ fun OmarchyNavHost(
                 onToggleRule = viewModel::toggleRule,
                 onOpenAgentLog = { navController.navigate(Routes.AGENT_LOG) },
                 onOpenTerminal = { navController.navigate(Routes.TERMINAL) },
+                onOpenWidgets = { navController.navigate(Routes.WIDGETS) },
             )
         }
         composable(Routes.AGENT_LOG) {
             AgentLogScreen(entries = uiState.agentLog, onBack = { navController.popBackStack() })
+        }
+        composable(Routes.WIDGETS) {
+            val widgetsViewModel: WidgetsViewModel = viewModel(factory = WidgetsViewModel.factory(container))
+            val widgetsState by widgetsViewModel.uiState.collectAsState()
+            WidgetsScreen(
+                allFiles = widgetsState.allFiles,
+                activeFiles = widgetsState.activeFiles,
+                onBack = { navController.popBackStack() },
+                onToggleActive = widgetsViewModel::setActive,
+                onMoveUp = widgetsViewModel::moveUp,
+                onMoveDown = widgetsViewModel::moveDown,
+                onEdit = { fileName -> navController.navigate(Routes.widgetEditor(fileName)) },
+                onDelete = widgetsViewModel::delete,
+                onCreateNew = widgetsViewModel::createNew,
+            )
+        }
+        composable(Routes.WIDGET_EDITOR) { backStackEntry ->
+            val fileName = backStackEntry.arguments?.getString("fileName") ?: ""
+            val widgetsViewModel: WidgetsViewModel = viewModel(factory = WidgetsViewModel.factory(container))
+            WidgetEditorScreen(
+                fileName = fileName,
+                initialContent = remember(fileName) { widgetsViewModel.readContent(fileName) },
+                onBack = { navController.popBackStack() },
+                onSave = { name, content -> widgetsViewModel.saveContent(name, content) },
+            )
         }
     }
 }

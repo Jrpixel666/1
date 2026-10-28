@@ -49,6 +49,40 @@ classic sense (perceives app-usage state, decides, acts) than to an LLM-backed a
 a deliberate scope choice (see the project history) to keep the launcher private-by-default with
 zero API keys to manage.
 
+## Home screen widgets
+
+Inspired by [omalauncher](https://github.com/SimonSchubert/omalauncher)'s **OWL** - its README
+calls OWL "a small declarative language you can edit on the phone." OWL itself is a large, mature
+system (shell/HTTP/sensor data sources, reactive state, Canvas/Shader drawing, a widget
+marketplace with CI checking) - cloning it faithfully from its docs alone wasn't realistic to do
+correctly in one pass, so what's here is a **scoped subset in the same spirit**, not a port:
+
+- Widgets are plain-text `.owl` files, stored in app-private storage (`data/WidgetRepository.kt`)
+  so they're genuinely editable on-device - Settings -> widgets opens a list, tap one to edit it
+  in a built-in text editor (`ui/widgets/WidgetEditorScreen.kt`) with inline parse errors as you
+  type, Save writes straight back to the file.
+- Format (`widgets/OwlNode.kt`, `widgets/OwlParser.kt` - a hand-written tokenizer/parser with unit
+  tests in `app/src/test/.../OwlParserTest.kt`): a `widget { size: "6x2" }` header followed by
+  `Name { prop: value; children }` nodes. Layout: `Column`/`Row`/`Box`. Display: `Text`/`Button`/
+  `Spacer`. Props: `padding`, `spacing`, `background`/`color` (theme tokens like `accent`,
+  `surface`, `subtle`, or `red`/`green`/`yellow`/`magenta`/`cyan`), `radius`, `fill`, `weight`,
+  `size` (text size or grid rows/cols). `${clock}`, `${date}`, `${battery}` interpolate into any
+  `text:` string. `Button { onTap: open("pkg.name") }` or `onTap: url("https://...")` for taps.
+- Three bundled examples ship as the defaults (`app/src/main/assets/widgets/`): a clock, a
+  battery readout, and a quick-actions row - copied into app storage on first run so they're
+  editable too, not read-only assets.
+- Active widgets render stacked above the favorites list on the home screen
+  (`ui/widgets/ActiveWidgetsSection.kt`); which ones are active and in what order is managed from
+  the widgets screen and persisted via `data/WidgetPreferences.kt`.
+
+**Deliberately not included** (OWL has all of this; this subset doesn't): `cmd()`/`http()`/stream
+data sources, `state`/`persist`/`let`, `Grid`/`Flow`/`Image`/`Progress`/`Ring`/`Sparkline`/
+`Canvas`/`Shader`/`Terminal` nodes, `onDrag`, a widget marketplace, and the multi-page/6-column
+drag-and-drop grid (widgets here are a simple ordered vertical stack instead). A next step some
+day: real Android `AppWidgetHost`/`AppWidgetManager` support alongside this, so existing
+installed widgets (clock, weather, calendar apps) could be placed too - a separate, much simpler
+mechanism that can't do what a declarative widget can, but needs no custom language at all.
+
 ## Arch Linux ARM in proot
 
 The Terminal tab (bottom-right icon on the home screen, or Settings -> terminal) has two buttons:
@@ -108,14 +142,19 @@ app/src/main/java/com/omarchy/launcher/
   AppContainer.kt              - tiny manual DI container
   agent/                       - ranking, automation engine/actions/triggers, alarm scheduling,
                                   boot receiver, command parser
-  data/                        - PackageManager wrapper, DataStore-backed prefs
+  data/                        - PackageManager wrapper, DataStore-backed prefs, widget storage
   termux/                      - RUN_COMMAND dispatch + result receiver
+  widgets/                     - OwlNode/OwlParser (the scoped widget format), OwlRenderer,
+                                  LiveValues (${clock}/${date}/${battery}), WidgetAction
   ui/
     home/, drawer/             - launcher + app drawer screens (icons via ui/common/AppIcon.kt)
     terminal/                  - embedded terminal + Arch/proot controls
     settings/, agent/          - automation rules UI, activity log
+    widgets/                   - widget list/editor screens, home-screen widget section
     theme/                     - Omarchy palette/typography/shapes
-  assets/termux/                - install_archlinux_arm.sh, omarchy_theme.sh
+  assets/
+    termux/                    - install_archlinux_arm.sh, omarchy_theme.sh
+    widgets/                   - bundled default .owl widgets
 ```
 
 ## Building
@@ -125,6 +164,7 @@ Requires JDK 17+, the Android SDK (platform 34, build-tools 34.0.0), and network
 
 ```
 ./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest   # OwlParser unit tests, run on the JVM, no device needed
 ```
 
 The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. Install it with
@@ -135,10 +175,14 @@ minSdk 26 (Android 8.0), targetSdk/compileSdk 34.
 
 ## Known limitations
 
-- No app widgets on the home screen yet (would need `AppWidgetHost` integration).
+- Widgets are an OWL-*inspired* scoped subset, not a port - see "Deliberately not included"
+  above. Native Android `AppWidgetHost` support (so existing installed widgets - clock, weather,
+  calendar apps - can be placed too) is a tracked, not-yet-built follow-up.
 - Automation rules support two trigger types - "app X opens" (reactive) and "time of day"
   (a daily `AlarmManager` alarm per rule, rescheduled on boot via `BootCompletedReceiver`,
   inexact on purpose so it needs no exact-alarm permission). Location/connectivity-change
   triggers would be natural next additions.
 - Requires Termux + a one-time `allow-external-apps=true` opt-in for the Arch/proot features -
   this is an inherent Android platform constraint (see above), not a shortcut taken here.
+- If several active widgets are tall, they can push the favorites list down (the home screen's
+  widget section isn't independently scrollable yet).

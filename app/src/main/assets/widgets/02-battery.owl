@@ -1,0 +1,24 @@
+# Battery level as plain text. Real OWL has a Ring/Progress node for this; this scoped
+# subset only has Text/Column/Row/Box/Spacer/Button, so it's rendered as a number.
+widget {
+  size: "6x1"
+}
+
+Row {
+  padding: 16
+  spacing: 8
+
+  Text {
+    text: "battery"
+    color: subtle
+  }
+
+  Spacer {
+    weight: 1
+  }
+
+  Text {
+    text: "${battery}%"
+    color: accent
+  }
+}

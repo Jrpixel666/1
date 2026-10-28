@@ -50,6 +50,7 @@ fun SettingsScreen(
     onToggleRule: (String, Boolean) -> Unit,
     onOpenAgentLog: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenWidgets: () -> Unit,
 ) {
     var showAddRule by remember { mutableStateOf(false) }
 
@@ -82,6 +83,7 @@ fun SettingsScreen(
                 OutlinedButton(onClick = { showAddRule = true }) { Text("+ add rule") }
                 OutlinedButton(onClick = onOpenAgentLog) { Text("agent log") }
                 OutlinedButton(onClick = onOpenTerminal) { Text("terminal") }
+                OutlinedButton(onClick = onOpenWidgets) { Text("widgets") }
             }
 
             LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
