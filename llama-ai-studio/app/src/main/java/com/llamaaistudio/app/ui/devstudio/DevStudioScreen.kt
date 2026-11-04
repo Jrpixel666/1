@@ -46,6 +46,7 @@ import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.DevProjectEntity
 import com.llamaaistudio.app.devstudio.TermuxBridge
 import com.llamaaistudio.app.devstudio.rememberTermuxActionRunner
+import com.llamaaistudio.app.ui.linux.LinuxEntryCard
 import com.llamaaistudio.app.ui.theme.StudioOrange
 import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioSuccess
@@ -54,13 +55,13 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DevStudioScreen(app: LlamaAiStudioApp) {
+fun DevStudioScreen(app: LlamaAiStudioApp, onOpenLinux: () -> Unit = {}) {
     val viewModel: DevStudioViewModel = viewModel(factory = DevStudioViewModel.Factory(app))
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     if (uiState.selectedProject == null) {
-        ProjectListScreen(viewModel, projects)
+        ProjectListScreen(app, viewModel, projects, onOpenLinux)
     } else if (uiState.openFile != null) {
         FileEditorScreen(viewModel, uiState)
     } else {
@@ -69,7 +70,12 @@ fun DevStudioScreen(app: LlamaAiStudioApp) {
 }
 
 @Composable
-private fun ProjectListScreen(viewModel: DevStudioViewModel, projects: List<DevProjectEntity>) {
+private fun ProjectListScreen(
+    app: LlamaAiStudioApp,
+    viewModel: DevStudioViewModel,
+    projects: List<DevProjectEntity>,
+    onOpenLinux: () -> Unit,
+) {
     var showNewDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -80,6 +86,8 @@ private fun ProjectListScreen(viewModel: DevStudioViewModel, projects: List<DevP
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().padding(12.dp)) {
+            LinuxEntryCard(app, onOpenLinux)
+            Spacer(Modifier.height(16.dp))
             Text("Projects", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(12.dp))
             if (projects.isEmpty()) {

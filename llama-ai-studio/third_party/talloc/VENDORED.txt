@@ -1,0 +1,5 @@
+talloc 2.4.2 — https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
+License: LGPL-3.0-or-later (see the header of talloc.c / talloc.h).
+
+Trimmed to the files proot's build compiles: talloc.c, talloc.h and the lib/replace headers.
+The Android build config (config.h, memset_s shim) lives in ../talloc-android/.

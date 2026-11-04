@@ -17,8 +17,8 @@ android {
         applicationId = "com.llamaaistudio.app"
         minSdk = 31 // Pixel 9 ships Android 14+; 31 keeps headroom for the thermal/perf APIs we rely on
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -93,7 +93,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
         jniLibs {
-            useLegacyPackaging = false
+            // Extracted to nativeLibraryDir at install time: proot (libproot.so) and its loader
+            // are executables, and that directory is the only place Android lets a modern app
+            // execve() files from. Uncompressed in-APK libraries can't be executed.
+            useLegacyPackaging = true
             // :app and :imagegen each independently build against ANDROID_STL=c++_shared;
             // both contribute a byte-identical libc++_shared.so from the same NDK, which
             // the merge step otherwise flags as a conflict.
@@ -101,6 +104,30 @@ android {
         }
     }
 
+}
+
+// --- proot (built-in Linux) -----------------------------------------------------------------
+// Cross-compiles third_party/proot + talloc with the NDK into generated jniLibs, so the APK
+// ships libproot.so / libproot-loader.so next to the other native libraries.
+val prootJniLibs = layout.buildDirectory.dir("generated/proot/jniLibs")
+val buildProot = tasks.register<Exec>("buildProot") {
+    description = "Cross-compiles proot for arm64-v8a with the NDK"
+    val script = rootProject.file("scripts/build-proot.sh")
+    inputs.file(script)
+    inputs.dir(rootProject.file("third_party/proot/src"))
+    inputs.dir(rootProject.file("third_party/talloc-android"))
+    inputs.files(rootProject.file("third_party/talloc/talloc.c"), rootProject.file("third_party/talloc/talloc.h"))
+    outputs.dir(prootJniLibs)
+    val sdkDir = androidComponents.sdkComponents.sdkDirectory
+    val ndkVersion = android.ndkVersion
+    doFirst {
+        val ndk = sdkDir.get().asFile.resolve("ndk/$ndkVersion")
+        commandLine("bash", script.absolutePath, ndk.absolutePath, prootJniLibs.get().dir("arm64-v8a").asFile.absolutePath)
+    }
+}
+android.sourceSets.getByName("main").jniLibs.srcDir(prootJniLibs)
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+    dependsOn(buildProot)
 }
 
 tasks.withType<KotlinCompile>().configureEach {
@@ -136,6 +163,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Built-in Linux: unpacking the Alpine root filesystem (tar.gz with symlinks/modes)
+    implementation("org.apache.commons:commons-compress:1.27.1")
 
     // Networking (Hugging Face API + model downloads)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -30,6 +30,7 @@ import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.ui.chat.ChatScreen
 import com.llamaaistudio.app.ui.devstudio.DevStudioScreen
 import com.llamaaistudio.app.ui.huggingface.ModelsScreen
+import com.llamaaistudio.app.ui.linux.LinuxScreen
 import com.llamaaistudio.app.ui.image.ImageGenScreen
 import com.llamaaistudio.app.ui.perf.PerformanceScreen
 import com.llamaaistudio.app.ui.sessions.SessionsScreen
@@ -37,6 +38,9 @@ import com.llamaaistudio.app.ui.webstudio.WebStudioScreen
 
 /** Sessions is reached from Chat's ☰ button, not the bottom bar. */
 const val SESSIONS_ROUTE = "sessions"
+
+/** The Linux terminal is reached from Dev Studio. */
+const val LINUX_ROUTE = "linux"
 
 enum class StudioDestination(
     val route: String,
@@ -60,7 +64,8 @@ fun StudioBottomBar(navController: NavHostController) {
     NavigationBar {
         StudioDestination.entries.forEach { dest ->
             val selected = currentRoute == dest.route ||
-                (dest == StudioDestination.Chat && currentRoute == SESSIONS_ROUTE)
+                (dest == StudioDestination.Chat && currentRoute == SESSIONS_ROUTE) ||
+                (dest == StudioDestination.Dev && currentRoute == LINUX_ROUTE)
             NavigationBarItem(
                 selected = selected,
                 onClick = { navController.navigateToTab(dest) },
@@ -101,7 +106,12 @@ fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
             ModelsScreen(app = app)
         }
         composable(StudioDestination.Dev.route) {
-            DevStudioScreen(app = app)
+            DevStudioScreen(app = app, onOpenLinux = {
+                navController.navigate(LINUX_ROUTE) { launchSingleTop = true }
+            })
+        }
+        composable(LINUX_ROUTE) {
+            LinuxScreen(app = app, onBack = { navController.popBackStack() })
         }
         composable(StudioDestination.Perf.route) {
             PerformanceScreen(app = app)

@@ -40,6 +40,8 @@ a Web Studio that builds and serves websites from an idea, and a lightweight And
 - **Dev Studio** — project scaffolding, a file explorer, and a plain-text/monospace code
   editor for Kotlin/Java/XML, all stored in app-private storage. See **Dev Studio and ARM64**
   below for why on-device APK building is scoped as experimental.
+  The Dev tab also opens the **Linux terminal**: a built-in Alpine Linux (see **Built-in
+  Linux** below) with one-tap installs of Node.js, Java + Gradle and git.
 
 ## Native engine
 
@@ -132,6 +134,31 @@ Cleartext HTTP from the app itself is allowed only to `127.0.0.1`/`localhost`
 that copies the project to `~/llama-web/<name>`, installs Node.js on first run, and starts it
 on port 3000. One-time Termux setup (install it from F-Droid): allow the **Run commands in
 Termux** permission, then paste **Copy setup command** into Termux.
+
+## Built-in Linux (Alpine + proot)
+
+The app carries its own Linux userland, so it doesn't depend on Termux:
+
+- **proot** (`third_party/proot`, termux/proot pinned in `VENDORED_COMMIT.txt`, GPL-2.0) and
+  **talloc** (`third_party/talloc`, LGPL-3.0+) are cross-compiled by `scripts/build-proot.sh`
+  (Gradle task `:app:buildProot`, runs automatically) and packaged as
+  `lib/arm64-v8a/libproot.so` + `libproot-loader.so`.
+- Native libraries are **extracted at install** (`useLegacyPackaging = true`): the app's
+  `nativeLibraryDir` is the only place Android 10+ lets a modern app execute files from.
+  The loader is unbundled (`PROOT_LOADER`) for the same reason — proot would otherwise
+  extract it into app storage and exec it there.
+- **Install** downloads `alpine-minirootfs-3.24.3-aarch64.tar.gz` (~4 MB) from
+  dl-cdn.alpinelinux.org, checks it against the pinned SHA-256 from Alpine's `.sha256`, and
+  unpacks it with `RootfsExtractor` (symlinks resolved chroot-style, permissions kept, nothing
+  can be written outside the rootfs). DNS, hosts and the main/community repos are configured.
+- Commands run as `proot --kill-on-exit --link2symlink -0 -r <rootfs> … /bin/sh -lc <cmd>` with
+  a clean environment; Web/Dev Studio projects are mounted at `/projects/web` and
+  `/projects/apps`.
+- **Self-test** checks each step (run a Linux program, write files, DNS + HTTPS) and says
+  plainly if this phone's Android blocks executing the guest's programs.
+
+Not verified here: this build environment has no ARM64 device, so the Self-test on a real
+phone is the first time the guest actually runs.
 
 ## Database migrations
 

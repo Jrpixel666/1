@@ -13,6 +13,8 @@ import com.llamaaistudio.app.data.repo.ModelRepository
 import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
+import com.llamaaistudio.app.linux.LinuxEnvironment
+import com.llamaaistudio.app.linux.LinuxTerminal
 import com.llamaaistudio.app.webserver.LocalWebServer
 import com.llamaaistudio.imagegen.ImageGenEngine
 import android.util.Log
@@ -50,6 +52,13 @@ class LlamaAiStudioApp : Application() {
         private set
 
     lateinit var webProjectRepository: WebProjectRepository
+        private set
+
+    /** Built-in Alpine Linux (proot) and its app-wide terminal. */
+    lateinit var linux: LinuxEnvironment
+        private set
+
+    lateinit var linuxTerminal: LinuxTerminal
         private set
 
     /** Web Studio's built-in server; app-scoped so it keeps running across screens. */
@@ -96,6 +105,8 @@ class LlamaAiStudioApp : Application() {
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
         hfApi = HfApi.create(httpClient)
+        linux = LinuxEnvironment(this, httpClient)
+        linuxTerminal = LinuxTerminal(linux)
         downloadManager = ModelDownloadManager(modelRepository.modelsDir, { file, meta, sha, verified ->
             modelRepository.registerModel(
                 file = file,
