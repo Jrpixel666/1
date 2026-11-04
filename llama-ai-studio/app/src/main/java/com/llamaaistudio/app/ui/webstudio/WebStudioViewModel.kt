@@ -10,6 +10,8 @@ import com.llamaaistudio.app.devstudio.TermuxWebServer
 import com.llamaaistudio.app.engine.ChatTurn
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
+import com.llamaaistudio.app.webserver.LocalWebServer
+import com.llamaaistudio.app.webserver.WebServerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,13 +29,6 @@ import java.util.concurrent.TimeUnit
 
 enum class ServerStatus { UNKNOWN, STOPPED, STARTING, RUNNING }
 
-sealed interface PreviewMode {
-    /** Opens the project's index.html straight from app storage — no server, no /api routes. */
-    data object Offline : PreviewMode
-    /** Loads the Termux-served site, exactly as a browser on the phone would see it. */
-    data object Live : PreviewMode
-}
-
 data class WebStudioUiState(
     val selectedProject: WebProjectEntity? = null,
     val files: List<File> = emptyList(),
@@ -44,11 +39,20 @@ data class WebStudioUiState(
     val isGenerating: Boolean = false,
     val genTokens: Int = 0,
     val genTps: Double = 0.0,
-    val server: ServerStatus = ServerStatus.UNKNOWN,
-    val preview: PreviewMode? = null,
+    /** Built-in server, when it is serving *this* project. */
+    val server: LocalWebServer.State = LocalWebServer.State(),
+    val shareOnLan: Boolean = false,
+    /** Optional: the project's own server.js running under Node in Termux (Node template only). */
+    val nodeServer: ServerStatus = ServerStatus.UNKNOWN,
+    /** URL shown in the in-app preview, or null when the preview is closed. */
+    val previewUrl: String? = null,
 ) {
-    val serverUrl: String? get() = selectedProject?.let { "http://127.0.0.1:${it.port}/" }
+    val serverRunning: Boolean get() = server.running
+    val nodeUrl: String get() = "http://127.0.0.1:$NODE_PORT/"
 }
+
+/** Port the optional Termux Node server uses (the built-in server keeps the project port). */
+const val NODE_PORT = 3000
 
 private const val WEB_GEN_MAX_TOKENS = 2048
 private const val WEB_GEN_CONTEXT_CHARS = 5000
@@ -73,6 +77,7 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         .build()
 
     private var pollJob: Job? = null
+    private var serverWatchJob: Job? = null
     private var genJob: Job? = null
     private var startRequestedAt = 0L
 
@@ -85,16 +90,29 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun openProject(project: WebProjectEntity) {
-        _uiState.value = WebStudioUiState(selectedProject = project)
+        _uiState.value = WebStudioUiState(selectedProject = project, shareOnLan = _uiState.value.shareOnLan)
         viewModelScope.launch {
             repo.touchOpened(project)
             refreshFiles()
         }
-        startPolling(project)
+        serverWatchJob?.cancel()
+        serverWatchJob = viewModelScope.launch {
+            app.webServer.state.collect { s ->
+                val mine = s.running && s.config?.projectId == project.id
+                _uiState.update {
+                    it.copy(
+                        server = if (mine) s else LocalWebServer.State(error = s.error.takeIf { s.config?.projectId == project.id }),
+                        previewUrl = if (!mine && it.previewUrl != null && it.previewUrl != it.nodeUrl) null else it.previewUrl,
+                    )
+                }
+            }
+        }
+        if (project.template == "node") startNodePolling() else pollJob?.cancel()
     }
 
     fun closeProject() {
         pollJob?.cancel()
+        serverWatchJob?.cancel()
         genJob?.cancel()
         _uiState.value = WebStudioUiState()
     }
@@ -135,7 +153,7 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         viewModelScope.launch {
             repo.writeFile(file, state.openFileContent)
             _uiState.update { it.copy(dirty = false, status = "Saved ${file.name}") }
-            syncIfServing(changed = listOf(file))
+            syncNodeIfRunning(changed = listOf(file))
         }
     }
 
@@ -225,38 +243,106 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             }
 
             val names = written.joinToString(", ") { it.relativeTo(root).path }
+            // Serve it straight away so testing is one tap; live reload refreshes open pages.
+            val wasRunning = _uiState.value.serverRunning
+            if (!wasRunning) startServerNow(project)
+            val url = _uiState.value.server.localUrl
             _uiState.update {
                 it.copy(
                     isGenerating = false,
                     status = "Built ${written.size} file(s): $names ($tokens tokens). " +
-                        if (it.server == ServerStatus.RUNNING) "Updating the running server…" else "Tap Start server to test it.",
+                        when {
+                            url == null -> "Tap Start server to test it."
+                            wasRunning -> "Open previews refresh automatically."
+                            else -> "Live at $url — tap Preview."
+                        },
                 )
             }
-            syncIfServing(changed = written)
+            syncNodeIfRunning(changed = written)
         }
     }
 
-    // --- server -----------------------------------------------------------------------------
+    // --- built-in server -------------------------------------------------------------------
 
-    /** Exports the latest files, then has Termux install what's missing and (re)start the server. */
     fun startServer() {
+        val project = _uiState.value.selectedProject ?: return
+        if (startServerNow(project)) {
+            val st = _uiState.value.server
+            _uiState.update { it.copy(status = "Serving at ${st.localUrl}" + (st.lanUrl?.let { lan -> " · on Wi-Fi: $lan" } ?: "")) }
+        }
+    }
+
+    /** Starts (or restarts) the built-in server on this project; returns false on failure. */
+    private fun startServerNow(project: WebProjectEntity): Boolean {
+        val result = app.webServer.start(
+            LocalWebServer.Config(
+                root = repo.previewRoot(project),
+                port = project.port,
+                shareOnLan = _uiState.value.shareOnLan,
+                label = project.name,
+                projectId = project.id,
+            )
+        )
+        result.onSuccess { state ->
+            _uiState.update { it.copy(server = state) }
+            runCatching { WebServerService.start(app) }
+        }.onFailure { e ->
+            _uiState.update { it.copy(status = "Couldn't start the server: ${e.message}") }
+        }
+        return result.isSuccess
+    }
+
+    fun stopServer() {
+        app.webServer.stop()
+        _uiState.update { it.copy(status = "Server stopped") }
+    }
+
+    fun setShareOnLan(enabled: Boolean) {
+        _uiState.update { it.copy(shareOnLan = enabled) }
+        val project = _uiState.value.selectedProject ?: return
+        if (_uiState.value.serverRunning) {
+            startServerNow(project)
+            val st = _uiState.value.server
+            _uiState.update {
+                it.copy(
+                    status = if (!enabled) "Wi-Fi sharing off — only this phone can open the site."
+                    else st.lanUrl?.let { lan -> "Other devices on your Wi-Fi can open $lan" }
+                        ?: "Couldn't find a Wi-Fi address — are you connected to Wi-Fi?",
+                )
+            }
+        }
+    }
+
+    /** Opens the in-app preview, starting the built-in server first if needed. */
+    fun openPreview() {
+        val project = _uiState.value.selectedProject ?: return
+        if (!_uiState.value.serverRunning && !startServerNow(project)) return
+        _uiState.update { it.copy(previewUrl = it.server.localUrl) }
+    }
+
+    fun openNodePreview() {
+        _uiState.update { it.copy(previewUrl = it.nodeUrl) }
+    }
+
+    fun closePreview() {
+        _uiState.update { it.copy(previewUrl = null) }
+    }
+
+    // --- optional: Node.js server.js in Termux --------------------------------------------
+
+    /** Exports the project; Termux installs Node.js if missing and (re)starts server.js. */
+    fun startNodeInTermux() {
         val project = _uiState.value.selectedProject ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(status = "Preparing files for Termux…") }
             repo.exportToDownloads(project)
-            val ok = TermuxBridge.runCommand(
-                app,
-                TermuxWebServer.startScript(project.name, project.template, project.port),
-                TermuxBridge.TERMUX_HOME,
-            )
+            val ok = TermuxBridge.runCommand(app, TermuxWebServer.startScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME)
             if (ok) {
                 startRequestedAt = System.currentTimeMillis()
                 _uiState.update {
                     it.copy(
-                        server = ServerStatus.STARTING,
-                        status = "Starting in Termux. The first run installs " +
-                            (if (project.template == "node") "Node.js" else "Python") +
-                            " — that can take a minute. The preview opens as soon as it's up.",
+                        nodeServer = ServerStatus.STARTING,
+                        status = "Starting server.js in Termux. The first run installs Node.js — that can take a minute.",
                     )
                 }
             } else {
@@ -265,32 +351,33 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         }
     }
 
-    fun stopServer() {
+    fun stopNodeInTermux() {
         val project = _uiState.value.selectedProject ?: return
         val ok = TermuxBridge.runCommand(
-            app, TermuxWebServer.stopScript(project.name, project.port), TermuxBridge.TERMUX_HOME, background = true,
+            app, TermuxWebServer.stopScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME, background = true,
         )
         _uiState.update {
             it.copy(
-                status = if (ok) "Stopping server…" else termuxUnreachableMessage(),
-                preview = if (it.preview == PreviewMode.Live) null else it.preview,
+                status = if (ok) "Stopping the Node server…" else termuxUnreachableMessage(),
+                previewUrl = if (it.previewUrl == it.nodeUrl) null else it.previewUrl,
             )
         }
     }
 
-    private suspend fun syncIfServing(changed: List<File>) {
+    private suspend fun syncNodeIfRunning(changed: List<File>) {
         val project = _uiState.value.selectedProject ?: return
-        if (_uiState.value.server != ServerStatus.RUNNING) return
+        if (project.template != "node" || _uiState.value.nodeServer != ServerStatus.RUNNING) return
         repo.exportToDownloads(project)
-        val serverCodeChanged = project.template == "node" &&
-            changed.any { it.parentFile?.canonicalPath == File(project.rootPath).canonicalPath && it.extension == "js" }
-        if (serverCodeChanged || changed.any { it.name == "package.json" }) {
-            startServer() // server code changed: restart so Node picks it up
+        val root = File(project.rootPath).canonicalPath
+        val serverCodeChanged = changed.any {
+            (it.parentFile?.canonicalPath == root && it.extension == "js") || it.name == "package.json"
+        }
+        if (serverCodeChanged) {
+            startNodeInTermux() // Node only picks up server code on restart
         } else {
             TermuxBridge.runCommand(
-                app, TermuxWebServer.syncScript(project.name, project.port), TermuxBridge.TERMUX_HOME, background = true,
+                app, TermuxWebServer.syncScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME, background = true,
             )
-            _uiState.update { it.copy(status = (it.status ?: "") + " Server updated — reload the preview.") }
         }
     }
 
@@ -300,33 +387,31 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         else -> "Termux didn't accept the command. Run the one-time setup command in Termux (Copy setup command), then try again."
     }
 
-    private fun startPolling(project: WebProjectEntity) {
+    private fun startNodePolling() {
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
             while (isActive) {
-                val up = probe(project.port)
+                val up = probe(NODE_PORT)
                 _uiState.update { state ->
-                    val starting = state.server == ServerStatus.STARTING &&
+                    val starting = state.nodeServer == ServerStatus.STARTING &&
                         System.currentTimeMillis() - startRequestedAt < STARTING_TIMEOUT_MS
                     val next = when {
                         up -> ServerStatus.RUNNING
                         starting -> ServerStatus.STARTING
                         else -> ServerStatus.STOPPED
                     }
-                    // Jump straight into the live preview once a server we just started comes up.
-                    val openPreview = next == ServerStatus.RUNNING && state.server == ServerStatus.STARTING
-                    val preview = when {
-                        openPreview -> PreviewMode.Live
-                        next != ServerStatus.RUNNING && state.preview == PreviewMode.Live -> null
-                        else -> state.preview
-                    }
+                    val justStarted = next == ServerStatus.RUNNING && state.nodeServer == ServerStatus.STARTING
                     state.copy(
-                        server = next,
-                        preview = preview,
-                        status = if (openPreview) "Server running at ${state.serverUrl}" else state.status,
+                        nodeServer = next,
+                        previewUrl = when {
+                            justStarted -> state.nodeUrl
+                            next != ServerStatus.RUNNING && state.previewUrl == state.nodeUrl -> null
+                            else -> state.previewUrl
+                        },
+                        status = if (justStarted) "Node server running at ${state.nodeUrl}" else state.status,
                     )
                 }
-                delay(if (_uiState.value.server == ServerStatus.STARTING) 1000 else 2500)
+                delay(if (_uiState.value.nodeServer == ServerStatus.STARTING) 1000 else 3000)
             }
         }
     }
@@ -338,22 +423,12 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         }.getOrDefault(false)
     }
 
-    fun showPreview(mode: PreviewMode?) {
-        _uiState.update { it.copy(preview = mode) }
-    }
-
     fun clearStatus() {
         _uiState.update { it.copy(status = null) }
     }
 
     fun setStatus(message: String) {
         _uiState.update { it.copy(status = message) }
-    }
-
-    fun offlinePreviewUrl(): String? {
-        val project = _uiState.value.selectedProject ?: return null
-        val index = File(repo.previewRoot(project), "index.html")
-        return if (index.exists()) "file://${index.absolutePath}" else null
     }
 
     class Factory(private val app: LlamaAiStudioApp) : ViewModelProvider.Factory {

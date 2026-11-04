@@ -20,9 +20,9 @@ a Web Studio that builds and serves websites from an idea, and a lightweight And
   session", so opening one from either side keeps the other in sync.
 - **Web** (Web Studio) — describe a website and the loaded model builds it: HTML, CSS and
   JavaScript, several files per generation (`=== FILE: path ===` blocks, path-checked so
-  output can't escape the project). Static-site and Node.js (zero-dependency `server.js` +
-  `public/`) templates, a file list and code editor, an offline **Quick preview** and a
-  **Start server** button that runs the site in Termux — see **Web Studio and Termux** below.
+  output can't escape the project). Static-site and Node.js templates, a file list and code
+  editor, and a **built-in web server**: one tap serves the site at `http://127.0.0.1:8080`
+  with live reload — see **Web Studio's built-in server** below.
 - **Image** — fully local text-to-image generation on a vendored, pinned build of
   stable-diffusion.cpp (`third_party/stable-diffusion.cpp`, own module: `:imagegen`).
   Prompt/negative-prompt/steps/CFG/size controls, live per-step progress and cancel, a
@@ -106,27 +106,32 @@ silently assuming Google's x86-64 binaries would run on the device. Plain JVM
 labelled experimental in the UI because AGP's own `aapt2` dependency still expects the x86
 artifact unless substituted.
 
-## Web Studio and Termux
+## Web Studio's built-in server
 
-**Start server** exports the project to `Download/LlamaAiStudioWeb/<name>/`, then sends
-Termux a script (`TermuxWebServer.kt`) that:
+`webserver/LocalWebServer.kt` is a small HTTP/1.1 static-file server inside the app (plain
+`java.net` sockets, no dependencies), so testing a site needs no Termux and no installs:
 
-1. copies the files into Termux's home (`~/llama-web/<name>` — npm can't create symlinks on
-   shared storage),
-2. installs what's missing, first run only: `pkg install python` (static) or `pkg install
-   nodejs` (+ `npm install` if `package.json` declares dependencies),
-3. (re)starts the server on `127.0.0.1:8080` in a visible Termux session (Ctrl+C there, or
-   **Stop** in the app, shuts it down).
+- **Start server** / **Preview** serve the project at `http://127.0.0.1:8080` (next free port
+  if taken). A successful AI build starts it automatically.
+- **Live reload**: HTML pages get a tiny script that polls `/__llama/version` — a fingerprint
+  of the folder's file timestamps — and reloads when anything changes, so the in-app preview
+  and any browser tab refresh themselves after each build or save.
+- **Share on Wi-Fi** (off by default) binds all interfaces so a laptop or another phone on the
+  same network can open `http://<phone-ip>:8080`.
+- GET/HEAD only, `Cache-Control: no-store`, every path canonicalised and kept inside the
+  project folder.
+- `WebServerService` (a foreground service with a "Serving … · Stop" notification) keeps the
+  server answering while you test in another browser — otherwise Android freezes the
+  backgrounded app and the page hangs.
 
-The app checks the port every few seconds, opens the live preview as soon as the server
-answers, and pushes new builds and saves to the running server automatically (Node restarts
-when `server.js` changes). Cleartext HTTP is allowed only to `127.0.0.1`/`localhost`
+Cleartext HTTP from the app itself is allowed only to `127.0.0.1`/`localhost`
 (`res/xml/network_security_config.xml`).
 
-One-time Termux setup (install Termux from F-Droid — the Play Store build is outdated): grant
-the **Run commands in Termux** permission when the app asks, then paste the command from
-**Copy setup command** into Termux. It sets `allow-external-apps=true` and runs
-`termux-setup-storage`.
+**Node projects (optional Termux):** the built-in server serves `public/`. To run the real
+`server.js` (for `/api` routes), **Start Node** sends Termux a script (`TermuxWebServer.kt`)
+that copies the project to `~/llama-web/<name>`, installs Node.js on first run, and starts it
+on port 3000. One-time Termux setup (install it from F-Droid): allow the **Run commands in
+Termux** permission, then paste **Copy setup command** into Termux.
 
 ## Database migrations
 

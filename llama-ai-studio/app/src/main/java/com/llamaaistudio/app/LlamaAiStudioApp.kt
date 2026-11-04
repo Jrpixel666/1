@@ -13,6 +13,7 @@ import com.llamaaistudio.app.data.repo.ModelRepository
 import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
+import com.llamaaistudio.app.webserver.LocalWebServer
 import com.llamaaistudio.imagegen.ImageGenEngine
 import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -50,6 +51,9 @@ class LlamaAiStudioApp : Application() {
 
     lateinit var webProjectRepository: WebProjectRepository
         private set
+
+    /** Web Studio's built-in server; app-scoped so it keeps running across screens. */
+    val webServer = LocalWebServer()
 
     lateinit var modelRepository: ModelRepository
         private set

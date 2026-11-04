@@ -1,14 +1,19 @@
 package com.llamaaistudio.app.ui.webstudio
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,12 +52,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -71,6 +78,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llamaaistudio.app.LlamaAiStudioApp
@@ -94,7 +102,7 @@ fun WebStudioScreen(app: LlamaAiStudioApp) {
 
     when {
         uiState.selectedProject == null -> ProjectListScreen(viewModel, projects)
-        uiState.preview != null -> PreviewScreen(viewModel, uiState)
+        uiState.previewUrl != null -> PreviewScreen(viewModel, uiState.previewUrl!!)
         uiState.openFile != null -> FileEditorScreen(viewModel, uiState)
         else -> ProjectScreen(viewModel, uiState)
     }
@@ -114,7 +122,7 @@ private fun ProjectListScreen(viewModel: WebStudioViewModel, projects: List<WebP
                 Column {
                     Text("Web Studio", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Describe a site · AI builds it · serve it from Termux",
+                        "Describe a site · AI builds it · test it instantly",
                         style = MaterialTheme.typography.labelSmall,
                         color = StudioTextMuted,
                     )
@@ -201,8 +209,8 @@ private fun NewWebProjectDialog(onCreate: (String, String) -> Unit, onDismiss: (
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (template == "node") "server.js + public/ — served with Node (adds /api routes)."
-                    else "HTML, CSS and JavaScript — served with Python's http.server.",
+                    if (template == "node") "public/ is served instantly by the app; server.js (/api routes) can run under Node in Termux."
+                    else "HTML, CSS and JavaScript — served instantly by the app's built-in server.",
                     style = MaterialTheme.typography.labelSmall,
                     color = StudioTextMuted,
                 )
@@ -235,7 +243,15 @@ private fun ProjectScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiSta
                         Text(templateLabel(project.template), style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
                     }
                 },
-                actions = { ServerBadge(uiState.server) },
+                actions = {
+                    ServerBadge(
+                        when {
+                            uiState.serverRunning || uiState.nodeServer == ServerStatus.RUNNING -> ServerStatus.RUNNING
+                            uiState.nodeServer == ServerStatus.STARTING -> ServerStatus.STARTING
+                            else -> ServerStatus.STOPPED
+                        }
+                    )
+                },
             )
         },
     ) { padding ->
@@ -337,82 +353,141 @@ private fun BuildCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) 
 @Composable
 private fun RunCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
     val context = LocalContext.current
-    val runTermux = rememberTermuxActionRunner(
-        onDenied = { viewModel.setStatus("Termux permission denied — the server can't be started without it.") },
-    )
     val project = uiState.selectedProject ?: return
-    val termuxInstalled = viewModel.termuxInstalled
+    val server = uiState.server
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     SectionCard("2 · Run & test") {
         Text(
-            when (uiState.server) {
-                ServerStatus.RUNNING -> "Serving at ${uiState.serverUrl}"
-                ServerStatus.STARTING -> "Starting in Termux…"
-                else -> "Starts a local server in Termux on port ${project.port}, installing " +
-                    (if (project.template == "node") "Node.js" else "Python") + " the first time."
-            },
+            if (server.running) "Live at ${server.localUrl} — pages reload automatically when files change."
+            else "Built-in server — nothing to install. Starts on port ${project.port}" +
+                (if (project.template == "node") " and serves public/." else "."),
             style = MaterialTheme.typography.bodySmall,
-            color = if (uiState.server == ServerStatus.RUNNING) StudioSuccess else StudioTextMuted,
+            color = if (server.running) StudioSuccess else StudioTextMuted,
         )
+        server.error?.let {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = StudioError)
+        }
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (!termuxInstalled) {
-                Button(onClick = { context.startActivity(TermuxBridge.installTermuxIntent()) }) { Text("Install Termux") }
-            } else {
-                Button(
-                    onClick = { runTermux { viewModel.startServer() } },
-                    enabled = uiState.server != ServerStatus.STARTING,
-                ) {
+            if (!server.running) {
+                Button(onClick = {
+                    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS,
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        // Only for the "server running · Stop" notification; serving works either way.
+                        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    viewModel.startServer()
+                }) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (uiState.server == ServerStatus.RUNNING) "Restart server" else "Start server")
+                    Text("Start server")
                 }
-                if (uiState.server == ServerStatus.RUNNING || uiState.server == ServerStatus.STARTING) {
-                    OutlinedButton(onClick = { runTermux { viewModel.stopServer() } }) {
-                        Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Stop")
-                    }
+            } else {
+                OutlinedButton(onClick = viewModel::stopServer) {
+                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Stop")
                 }
             }
-            if (uiState.server == ServerStatus.RUNNING) {
-                OutlinedButton(onClick = { viewModel.showPreview(PreviewMode.Live) }) {
-                    Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Preview")
-                }
-                OutlinedButton(onClick = { uiState.serverUrl?.let { openInBrowser(context, it) } }) {
+            OutlinedButton(onClick = viewModel::openPreview) {
+                Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Preview")
+            }
+            if (server.running) {
+                OutlinedButton(onClick = { server.localUrl?.let { openInBrowser(context, it) } }) {
                     Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Browser")
                 }
-            } else {
-                OutlinedButton(onClick = { viewModel.showPreview(PreviewMode.Offline) }) {
-                    Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Quick preview")
-                }
             }
         }
 
-        if (termuxInstalled) {
-            Spacer(Modifier.height(10.dp))
-            Text("First time with Termux?", style = MaterialTheme.typography.labelMedium)
-            Text(
-                "Open Termux once and paste the setup command — it lets this app send Termux commands " +
-                    "and gives Termux access to the exported project files.",
-                style = MaterialTheme.typography.labelSmall,
-                color = StudioTextMuted,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = {
-                    copyToClipboard(context, "Termux setup", TermuxBridge.ALLOW_EXTERNAL_APPS_COMMAND)
-                    viewModel.setStatus("Setup command copied — paste it in Termux and press Enter.")
-                }) { Text("Copy setup command") }
-                TextButton(onClick = {
-                    context.packageManager.getLaunchIntentForPackage("com.termux")?.let(context::startActivity)
-                }) { Text("Open Termux") }
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Share on Wi-Fi", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    server.lanUrl?.let { "Open $it on your laptop or another phone" }
+                        ?: "Let other devices on the same Wi-Fi open the site",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (server.lanUrl != null) StudioSuccess else StudioTextMuted,
+                )
             }
+            Switch(checked = uiState.shareOnLan, onCheckedChange = viewModel::setShareOnLan)
+        }
+        server.lanUrl?.let { lan ->
+            TextButton(onClick = {
+                copyToClipboard(context, "Site address", lan)
+                viewModel.setStatus("Copied $lan")
+            }) { Text("Copy Wi-Fi address") }
+        }
+
+        if (project.template == "node") {
+            Spacer(Modifier.height(8.dp))
+            NodeTermuxSection(viewModel, uiState)
+        }
+    }
+}
+
+/** Optional for Node projects: run the real server.js (API routes) under Node in Termux. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NodeTermuxSection(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
+    val context = LocalContext.current
+    val runTermux = rememberTermuxActionRunner(
+        onDenied = { viewModel.setStatus("Termux permission denied — server.js can't be run without it.") },
+    )
+    var showSetup by remember { mutableStateOf(false) }
+
+    HorizontalDivider()
+    Spacer(Modifier.height(8.dp))
+    Text("Run server.js with Node (optional)", style = MaterialTheme.typography.labelLarge)
+    Text(
+        when (uiState.nodeServer) {
+            ServerStatus.RUNNING -> "Node server running at ${uiState.nodeUrl}"
+            ServerStatus.STARTING -> "Starting in Termux…"
+            else -> "Needed only for /api routes. Uses Termux and installs Node.js the first time (port $NODE_PORT)."
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = if (uiState.nodeServer == ServerStatus.RUNNING) StudioSuccess else StudioTextMuted,
+    )
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (!viewModel.termuxInstalled) {
+            OutlinedButton(onClick = { context.startActivity(TermuxBridge.installTermuxIntent()) }) { Text("Install Termux") }
+        } else {
+            OutlinedButton(
+                onClick = { runTermux { viewModel.startNodeInTermux() } },
+                enabled = uiState.nodeServer != ServerStatus.STARTING,
+            ) { Text(if (uiState.nodeServer == ServerStatus.RUNNING) "Restart Node" else "Start Node") }
+            if (uiState.nodeServer == ServerStatus.RUNNING || uiState.nodeServer == ServerStatus.STARTING) {
+                OutlinedButton(onClick = { runTermux { viewModel.stopNodeInTermux() } }) { Text("Stop Node") }
+            }
+            if (uiState.nodeServer == ServerStatus.RUNNING) {
+                OutlinedButton(onClick = viewModel::openNodePreview) { Text("Preview Node") }
+            }
+            TextButton(onClick = { showSetup = !showSetup }) { Text(if (showSetup) "Hide setup" else "Termux setup") }
+        }
+    }
+    if (showSetup) {
+        Text(
+            "One time: open Termux and paste the setup command. It lets this app send Termux " +
+                "commands and gives Termux access to the exported project files.",
+            style = MaterialTheme.typography.labelSmall,
+            color = StudioTextMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                copyToClipboard(context, "Termux setup", TermuxBridge.ALLOW_EXTERNAL_APPS_COMMAND)
+                viewModel.setStatus("Setup command copied — paste it in Termux and press Enter.")
+            }) { Text("Copy setup command") }
+            TextButton(onClick = {
+                context.packageManager.getLaunchIntentForPackage("com.termux")?.let(context::startActivity)
+            }) { Text("Open Termux") }
         }
     }
 }
@@ -510,32 +585,27 @@ private fun FileEditorScreen(viewModel: WebStudioViewModel, uiState: WebStudioUi
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun PreviewScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
+private fun PreviewScreen(viewModel: WebStudioViewModel, url: String) {
     val context = LocalContext.current
-    val mode = uiState.preview ?: return
-    val url = when (mode) {
-        PreviewMode.Live -> uiState.serverUrl
-        PreviewMode.Offline -> viewModel.offlinePreviewUrl()
-    }
     var webView by remember { mutableStateOf<WebView?>(null) }
     BackHandler {
         val wv = webView
-        if (wv != null && wv.canGoBack()) wv.goBack() else viewModel.showPreview(null)
+        if (wv != null && wv.canGoBack()) wv.goBack() else viewModel.closePreview()
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = { viewModel.showPreview(null) }) {
+                    IconButton(onClick = viewModel::closePreview) {
                         Icon(Icons.Filled.Close, contentDescription = "Close preview")
                     }
                 },
                 title = {
                     Column {
-                        Text(if (mode == PreviewMode.Live) "Live preview" else "Quick preview", style = MaterialTheme.typography.titleMedium)
+                        Text("Preview", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            if (mode == PreviewMode.Live) url.orEmpty() else "From app storage — no server, /api calls won't work",
+                            url + " · live reload",
                             style = MaterialTheme.typography.labelSmall,
                             color = StudioTextMuted,
                             maxLines = 1,
@@ -545,36 +615,27 @@ private fun PreviewScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiSta
                 },
                 actions = {
                     IconButton(onClick = { webView?.reload() }) { Icon(Icons.Filled.Refresh, contentDescription = "Reload") }
-                    if (mode == PreviewMode.Live && url != null) {
-                        IconButton(onClick = { openInBrowser(context, url) }) {
-                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open in browser")
-                        }
+                    IconButton(onClick = { openInBrowser(context, url) }) {
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open in browser")
                     }
                 },
             )
         },
     ) { padding ->
-        if (url == null) {
-            Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No index.html to preview yet.", color = StudioTextMuted)
-            }
-            return@Scaffold
-        }
         AndroidView(
             modifier = Modifier.padding(padding).fillMaxSize().background(Color.White),
             factory = { ctx ->
                 WebView(ctx).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
-                    // Needed only for Quick preview (file:// from app-private storage).
-                    settings.allowFileAccess = mode == PreviewMode.Offline
                     webViewClient = WebViewClient()
                     loadUrl(url)
                     webView = this
                 }
             },
+            update = { wv -> if (wv.url != null && !wv.url!!.startsWith(url)) wv.loadUrl(url) },
         )
-        DisposableEffect(url) {
+        DisposableEffect(Unit) {
             onDispose {
                 webView?.destroy()
                 webView = null

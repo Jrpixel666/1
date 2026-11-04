@@ -1,12 +1,13 @@
 package com.llamaaistudio.app.devstudio
 
 /**
- * Shell scripts Web Studio hands to Termux. The project is exported to shared Downloads by the
- * app, then copied into Termux's own home (`~/llama-web/<name>`) before serving — npm can't
- * create the symlinks it needs on shared storage, and serving from Termux's home is faster.
+ * Shell scripts Web Studio hands to Termux to run a Node project's own server.js. Static
+ * files never need this: the app's built-in LocalWebServer serves them directly.
  *
- * Everything Termux needs is installed on first use (`pkg install python` / `nodejs`), so
- * a fresh Termux only needs the one-time allow-external-apps + storage setup.
+ * The project is exported to shared Downloads by the app, then copied into Termux's home
+ * (`~/llama-web/<name>`) before running — npm can't create the symlinks it needs on shared
+ * storage. Node.js is installed on first use (`pkg install nodejs`), so a fresh Termux only
+ * needs the one-time allow-external-apps + storage setup.
  */
 object TermuxWebServer {
     const val EXPORT_BASE = "LlamaAiStudioWeb"
@@ -47,10 +48,13 @@ object TermuxWebServer {
         fi
     """.trimIndent()
 
-    /** Installs what's missing, syncs the latest files and (re)starts the server in the foreground. */
-    fun startScript(name: String, template: String, port: Int): String {
-        val run = if (template == "node") {
-            """
+    /**
+     * Installs Node.js if missing, syncs the latest files and (re)starts the project's own
+     * server.js in a visible Termux session. (Static files are served by the app's built-in
+     * server; Termux is only needed to run real Node code.)
+     */
+    fun startScript(name: String, port: Int): String {
+        val run = """
             ensure node nodejs || exit 1
             if [ -f package.json ] && grep -q '"dependencies"' package.json; then
               echo "==> npm install"
@@ -60,14 +64,7 @@ object TermuxWebServer {
             [ -f "${'$'}ENTRY" ] || ENTRY=index.js
             echo "==> Serving on http://127.0.0.1:${'$'}PORT (Ctrl+C to stop)"
             PORT=${'$'}PORT node "${'$'}ENTRY" &
-            """.trimIndent()
-        } else {
-            """
-            ensure python python || exit 1
-            echo "==> Serving on http://127.0.0.1:${'$'}PORT (Ctrl+C to stop)"
-            python -m http.server "${'$'}PORT" --bind 127.0.0.1 &
-            """.trimIndent()
-        }
+        """.trimIndent()
         return listOf(
             header(name, port),
             ensureFn,
