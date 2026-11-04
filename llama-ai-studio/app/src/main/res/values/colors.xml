@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#17191C</color>
+    <color name="panel">#24272B</color>
+    <color name="panel_secondary">#30343A</color>
+    <color name="orange_primary">#FF8500</color>
+    <color name="orange_highlight">#FFAB40</color>
+    <color name="text_primary">#F5F5F5</color>
+</resources>

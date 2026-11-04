@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylised "L" mark in highlight orange over a flame-shaped accent, on transparent ground. -->
+    <path
+        android:pathData="M54,20 C62,20 68,27 66,35 C64,43 56,46 56,54 L56,72 L72,72 C76,72 79,75 79,79 C79,83 76,86 72,86 L46,86 C42,86 39,83 39,79 L39,54 C39,46 31,43 29,35 C27,27 33,20 41,20 C46,20 49,24 49,29 C49,24 49,20 54,20 Z"
+        android:fillColor="#FF8500" />
+    <path
+        android:pathData="M54,30 C58,32 60,36 58,41 C56,45 50,47 50,53 L50,66 L64,66 C66.5,66 68.5,68 68.5,70.5 C68.5,73 66.5,75 64,75 L46,75 C43.5,75 41.5,73 41.5,70.5 L41.5,53 C41.5,47 35.5,45 33.5,41 C31.5,36 34,31 38,30 C41,29 43,31 43,34 C43,31 45,27 48,28 C51,29 54,30 54,30 Z"
+        android:fillColor="#FFAB40" />
+</vector>
