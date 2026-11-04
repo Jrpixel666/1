@@ -1,5 +1,6 @@
 package com.llamaaistudio.app.ui.chat
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,38 +17,47 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,47 +70,103 @@ import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioPanelSecondary
 import com.llamaaistudio.app.ui.theme.StudioTextMuted
 import com.llamaaistudio.app.util.WorkspaceBridge
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(app: LlamaAiStudioApp) {
+fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
     val viewModel: ChatViewModel = viewModel(factory = ChatViewModel.Factory(app))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val engineState by viewModel.engineState.collectAsStateWithLifecycle()
     val genParams by viewModel.genParams.flow.collectAsStateWithLifecycle()
 
-    var showSessions by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var showSystemPrompt by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         WorkspaceBridge.consumePendingChatContext()?.let { inputText = it }
     }
 
+    LaunchedEffect(uiState.info) {
+        uiState.info?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearInfo()
+        }
+    }
+
+    val currentSession = uiState.currentSession
+    val streamingHere = uiState.isGenerating && uiState.generatingSessionId == uiState.currentSessionId
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
-                    val title = uiState.sessions.find { it.id == uiState.currentSessionId }?.title
-                        ?: "Llama AI Studio"
-                    Column {
-                        Text(title, style = MaterialTheme.typography.titleMedium)
+                    Column(modifier = Modifier.clickable(enabled = currentSession != null) { showRename = true }) {
+                        Text(
+                            currentSession?.title ?: "Llama AI Studio",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         EngineStatusLabel(engineState, uiState.liveGenTps, uiState.isGenerating)
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { showSessions = true }) {
+                    IconButton(onClick = onOpenSessions) {
                         Icon(Icons.Filled.Menu, contentDescription = "Sessions")
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.newSession() }) {
-                        Icon(Icons.Filled.Add, contentDescription = "New chat")
+                        Icon(Icons.Filled.Add, contentDescription = "New session")
                     }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Generation settings")
+                    }
+                    Box {
+                        IconButton(onClick = { showMenu = true }, enabled = currentSession != null) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Session options")
+                        }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Rename session") },
+                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                                onClick = { showMenu = false; showRename = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("System prompt") },
+                                leadingIcon = { Icon(Icons.Filled.Tune, contentDescription = null) },
+                                onClick = { showMenu = false; showSystemPrompt = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Export to note") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null) },
+                                onClick = { showMenu = false; viewModel.exportCurrentSessionToNote() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("All sessions") },
+                                leadingIcon = { Icon(Icons.Filled.Forum, contentDescription = null) },
+                                onClick = { showMenu = false; onOpenSessions() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Clear messages") },
+                                leadingIcon = { Icon(Icons.Filled.ClearAll, contentDescription = null) },
+                                onClick = { showMenu = false; confirmClear = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete session", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                },
+                                onClick = { showMenu = false; confirmDelete = true },
+                            )
+                        }
                     }
                 },
             )
@@ -110,7 +176,7 @@ fun ChatScreen(app: LlamaAiStudioApp) {
                 text = inputText,
                 onTextChange = { inputText = it },
                 isGenerating = uiState.isGenerating,
-                enabled = engineState is EngineState.Ready,
+                enabled = engineState is EngineState.Ready && currentSession != null,
                 onSend = {
                     if (inputText.isNotBlank()) {
                         viewModel.sendMessage(inputText)
@@ -128,25 +194,74 @@ fun ChatScreen(app: LlamaAiStudioApp) {
                 is EngineState.Error -> ErrorBanner((engineState as EngineState.Error).message)
                 is EngineState.Ready -> {}
             }
-            MessageList(
-                messages = uiState.messages,
-                streamingText = uiState.streamingText,
-                isGenerating = uiState.isGenerating,
-                modifier = Modifier.weight(1f),
-                onSaveAsNote = { content ->
-                    coroutineScope.launch { app.notesRepository.saveChatMessageAsNote(content) }
-                },
-            )
+            if (uiState.isGenerating && !streamingHere) {
+                Surface(color = StudioPanelSecondary, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Another session is still generating a reply…",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StudioTextMuted,
+                    )
+                }
+            }
+            if (uiState.messages.isEmpty() && !streamingHere) {
+                EmptySessionHint(
+                    systemPrompt = currentSession?.systemPrompt.orEmpty(),
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                MessageList(
+                    messages = uiState.messages,
+                    streamingText = uiState.streamingText,
+                    isGenerating = streamingHere,
+                    modifier = Modifier.weight(1f),
+                    onSaveAsNote = viewModel::saveMessageAsNote,
+                )
+            }
         }
     }
 
-    if (showSessions) {
-        SessionsSheet(
-            sessions = uiState.sessions,
-            currentId = uiState.currentSessionId,
-            onSelect = { viewModel.selectSession(it); showSessions = false },
-            onDelete = { viewModel.deleteSession(it) },
-            onDismiss = { showSessions = false },
+    if (showRename && currentSession != null) {
+        TextInputDialog(
+            title = "Rename session",
+            initial = currentSession.title,
+            singleLine = true,
+            onConfirm = { viewModel.renameCurrentSession(it); showRename = false },
+            onDismiss = { showRename = false },
+        )
+    }
+
+    if (showSystemPrompt && currentSession != null) {
+        TextInputDialog(
+            title = "System prompt",
+            initial = currentSession.systemPrompt,
+            singleLine = false,
+            supportingText = "Applies to this session only. Leave empty for none.",
+            onConfirm = { viewModel.updateCurrentSystemPrompt(it); showSystemPrompt = false },
+            onDismiss = { showSystemPrompt = false },
+        )
+    }
+
+    if (confirmClear) {
+        ConfirmDialog(
+            title = "Clear messages?",
+            message = "All messages in \"${currentSession?.title.orEmpty()}\" will be removed. The session itself is kept.",
+            confirmLabel = "Clear",
+            onConfirm = { viewModel.clearCurrentSession(); confirmClear = false },
+            onDismiss = { confirmClear = false },
+        )
+    }
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Delete session?",
+            message = "\"${currentSession?.title.orEmpty()}\" and all of its messages will be deleted.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                uiState.currentSessionId?.let(viewModel::deleteSession)
+                confirmDelete = false
+            },
+            onDismiss = { confirmDelete = false },
         )
     }
 
@@ -224,10 +339,9 @@ private fun MessageList(
     onSaveAsNote: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size, streamingText) {
-        if (messages.isNotEmpty() || streamingText.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size + if (isGenerating) 1 else 0)
-        }
+    val itemCount = messages.size + if (isGenerating) 1 else 0
+    LaunchedEffect(itemCount, streamingText.length / 64) {
+        if (itemCount > 0) listState.animateScrollToItem(itemCount - 1)
     }
     LazyColumn(
         state = listState,
@@ -260,6 +374,20 @@ private fun MessageBubble(message: ChatMessageEntity, onSaveAsNote: (String) -> 
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
                 Text(message.content, style = MaterialTheme.typography.bodyMedium)
+                if (!isUser && message.genTps == null && message.stopReason != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (message.stopReason == "error") "Interrupted by an error" else "Stopped early",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioTextMuted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { onSaveAsNote(message.content) }) {
+                            Text("Save as note", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
                 if (!isUser && message.genTps != null) {
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -326,48 +454,7 @@ private fun ChatInputBar(
                 }
             } else {
                 IconButton(onClick = onSend, enabled = enabled && text.isNotBlank()) {
-                    Icon(Icons.Filled.Send, contentDescription = "Send", tint = StudioOrange)
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SessionsSheet(
-    sessions: List<com.llamaaistudio.app.data.db.ChatSessionEntity>,
-    currentId: Long?,
-    onSelect: (Long) -> Unit,
-    onDelete: (Long) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        LazyColumn(modifier = Modifier.padding(12.dp)) {
-            items(sessions, key = { it.id }) { session ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp),
-                    ) {
-                        Text(
-                            session.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (session.id == currentId) StudioOrange else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Row {
-                        TextButton(onClick = { onSelect(session.id) }) { Text("Open") }
-                        TextButton(onClick = { onDelete(session.id) }) { Text("Delete") }
-                    }
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = StudioOrange)
                 }
             }
         }
@@ -423,4 +510,81 @@ private fun LabeledSlider(label: String, value: Float, min: Float, max: Float, o
         Text("$label: %.2f".format(value), style = MaterialTheme.typography.labelSmall)
         Slider(value = value, onValueChange = onChange, valueRange = min..max)
     }
+}
+
+@Composable
+private fun EmptySessionHint(systemPrompt: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Start the conversation", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "The session is titled from your first message. Rename it, change its system " +
+                "prompt or export it from the ⋮ menu.",
+            style = MaterialTheme.typography.bodySmall,
+            color = StudioTextMuted,
+        )
+        if (systemPrompt.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "System: $systemPrompt",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+fun TextInputDialog(
+    title: String,
+    initial: String,
+    singleLine: Boolean,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+    supportingText: String? = null,
+    confirmLabel: String = "Save",
+) {
+    var value by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                singleLine = singleLine,
+                minLines = if (singleLine) 1 else 3,
+                maxLines = if (singleLine) 1 else 8,
+                supportingText = supportingText?.let { { Text(it) } },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text(confirmLabel) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(confirmLabel, color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

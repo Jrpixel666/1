@@ -3,6 +3,7 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -261,8 +262,6 @@ Java_com_llamaaistudio_app_engine_LlamaNative_generate(
     std::string messagesJson = jstringToUtf8(env, jMessagesJson);
     std::vector<ChatTurn> turns = parseMessages(messagesJson);
     if (turns.empty()) return errorJson("no_messages");
-    std::string prompt = formatPrompt(session->model, turns);
-
     jmethodID onTokenMid = findOnTokenMethod(env, callback);
 
     // Fresh KV cache per call: each generate() invocation carries the whole conversation
@@ -271,18 +270,37 @@ Java_com_llamaaistudio_app_engine_LlamaNative_generate(
     llama_memory_clear(llama_get_memory(session->ctx), true);
 
     const int32_t nCtx = (int32_t) llama_n_ctx(session->ctx);
+    const int32_t nBatch = std::max<int32_t>(1, (int32_t) llama_n_batch(session->ctx));
+    // Leave room for the reply: maxTokens where possible, but never less than 32 tokens and
+    // never so much that the prompt gets no room at all.
+    const int32_t replyReserve = std::max<int32_t>(32, std::min<int32_t>(maxTokens, nCtx / 2));
+    const int32_t budget = std::max<int32_t>(1, nCtx - replyReserve);
 
-    int32_t nPromptTokens = -llama_tokenize(session->vocab, prompt.c_str(),
-                                             (int32_t) prompt.size(), nullptr, 0, true, true);
-    if (nPromptTokens <= 0) return errorJson("tokenize_failed");
+    auto tokenize = [&](const std::string &text) {
+        int32_t n = -llama_tokenize(session->vocab, text.c_str(), (int32_t) text.size(), nullptr, 0,
+                                    true, true);
+        std::vector<llama_token> toks;
+        if (n <= 0) return toks;
+        toks.resize(n);
+        llama_tokenize(session->vocab, text.c_str(), (int32_t) text.size(), toks.data(), n, true, true);
+        return toks;
+    };
 
-    std::vector<llama_token> promptTokens(nPromptTokens);
-    llama_tokenize(session->vocab, prompt.c_str(), (int32_t) prompt.size(), promptTokens.data(),
-                   nPromptTokens, true, true);
-
-    // Leave room for at least a few generated tokens; truncate oldest prompt tokens if needed.
-    int32_t budget = nCtx - std::max(32, std::min((int32_t) maxTokens, nCtx - 32));
+    // Long sessions outgrow the context window. Drop the oldest whole turns (keeping the
+    // system prompt and the latest user message) and re-apply the chat template, rather than
+    // chopping raw tokens off the front - that would cut off the BOS token, the system prompt
+    // and the template's own header, which derails most chat models.
+    std::vector<llama_token> promptTokens = tokenize(formatPrompt(session->model, turns));
+    while ((int32_t) promptTokens.size() > budget) {
+        auto firstDroppable = std::find_if(turns.begin(), turns.end(),
+                                           [](const ChatTurn &t) { return t.role != "system"; });
+        if (firstDroppable == turns.end() || firstDroppable + 1 >= turns.end()) break;
+        turns.erase(firstDroppable);
+        promptTokens = tokenize(formatPrompt(session->model, turns));
+    }
+    if (promptTokens.empty()) return errorJson("tokenize_failed");
     if ((int32_t) promptTokens.size() > budget) {
+        // A single message larger than the whole context: keep its tail.
         int32_t drop = (int32_t) promptTokens.size() - budget;
         promptTokens.erase(promptTokens.begin(), promptTokens.begin() + drop);
         llamaLogInfo("Prompt truncated by %d tokens to fit context", drop);
@@ -304,17 +322,42 @@ Java_com_llamaaistudio_app_engine_LlamaNative_generate(
 
     auto t0 = std::chrono::steady_clock::now();
 
-    llama_batch batch = llama_batch_get_one(promptTokens.data(), (int32_t) promptTokens.size());
-    if (llama_decode(session->ctx, batch) != 0) {
-        llama_sampler_free(chain);
-        return errorJson("prefill_decode_failed");
+    // llama_decode() rejects batches larger than n_batch, so prefill in n_batch-sized chunks -
+    // a single-shot decode made every conversation longer than ~512 tokens fail outright.
+    for (size_t off = 0; off < promptTokens.size(); off += (size_t) nBatch) {
+        if (session->cancel.load()) {
+            llama_sampler_free(chain);
+            return errorJson("cancelled");
+        }
+        const int32_t n = (int32_t) std::min(promptTokens.size() - off, (size_t) nBatch);
+        llama_batch batch = llama_batch_get_one(promptTokens.data() + off, n);
+        if (llama_decode(session->ctx, batch) != 0) {
+            llama_sampler_free(chain);
+            return errorJson("prefill_decode_failed");
+        }
     }
+    int32_t nPast = (int32_t) promptTokens.size();
 
     auto t1 = std::chrono::steady_clock::now();
 
     std::string stopReason = "length";
     int32_t nGenerated = 0;
     llama_token newToken;
+    std::string pending;
+
+    auto emitPiece = [&](const std::string &text) -> bool {
+        if (onTokenMid == nullptr || text.empty()) return true;
+        jstring jPiece = utf8ToJstring(env, text);
+        jboolean keepGoing = env->CallBooleanMethod(callback, onTokenMid, jPiece);
+        env->DeleteLocalRef(jPiece);
+        if (env->ExceptionCheck()) {
+            // An exception thrown by the Kotlin callback must not stay pending across more
+            // JNI calls (that's undefined behaviour); treat it as a stop request.
+            env->ExceptionClear();
+            return false;
+        }
+        return keepGoing == JNI_TRUE;
+    };
 
     for (int32_t i = 0; i < maxTokens; i++) {
         if (session->cancel.load()) {
@@ -330,25 +373,30 @@ Java_com_llamaaistudio_app_engine_LlamaNative_generate(
             break;
         }
 
-        std::string piece = tokenToPiece(session->vocab, newToken);
+        pending += tokenToPiece(session->vocab, newToken);
         nGenerated++;
 
-        if (onTokenMid != nullptr) {
-            jstring jPiece = utf8ToJstring(env, piece);
-            jboolean keepGoing = env->CallBooleanMethod(callback, onTokenMid, jPiece);
-            env->DeleteLocalRef(jPiece);
-            if (!keepGoing) {
-                stopReason = "cancelled";
-                break;
-            }
+        // A multi-byte character (emoji, CJK, accented letters in some vocabs) can be split
+        // across tokens; hold back the incomplete tail until the next token completes it.
+        const size_t ready = utf8CompletePrefixLength(pending);
+        if (ready > 0 && !emitPiece(pending.substr(0, ready))) {
+            stopReason = "cancelled";
+            break;
         }
+        pending.erase(0, ready);
 
+        if (nPast >= nCtx) {
+            stopReason = "context_full";
+            break;
+        }
         llama_batch nextBatch = llama_batch_get_one(&newToken, 1);
         if (llama_decode(session->ctx, nextBatch) != 0) {
             stopReason = "decode_error";
             break;
         }
+        nPast++;
     }
+    if (!pending.empty()) emitPiece(pending);
 
     auto t2 = std::chrono::steady_clock::now();
     llama_sampler_free(chain);

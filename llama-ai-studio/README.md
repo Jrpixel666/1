@@ -9,7 +9,14 @@ a notes workspace, and a lightweight Android dev workspace.
 - **Chat** — offline chat backed by a vendored, pinned build of llama.cpp
   (`third_party/llama.cpp`, see `VENDORED_COMMIT.txt`). Streaming generation, adjustable
   temperature/top-k/top-p/min-p/repeat-penalty/context length/max tokens, live tok/s, and
-  persistent sessions (Room).
+  persistent sessions (Room). The ⋮ menu renames the session, edits its system prompt,
+  exports it to Notes, clears or deletes it. Stopping a reply keeps what was generated so far.
+- **Sessions** — every chat session in one place: search across titles *and* message text,
+  pin favourites to the top, rename, per-session system prompt, duplicate (fork a
+  conversation), export as a Markdown transcript into Notes, clear and delete. Each entry
+  shows message count, last message, last activity and the model it last ran on. New
+  sessions are auto-titled from their first message. Chat and Sessions share one "active
+  session", so opening one from either side keeps the other in sync.
 - **Notes** — Markdown notes with folders, search, autosave, AI summaries (runs on the
   loaded local model), and two-way handoff with Chat (send a note into chat context, save a
   chat reply as a note). Side-by-side layout on wide screens (`BoxWithConstraints`).
@@ -95,6 +102,11 @@ silently assuming Google's x86-64 binaries would run on the device. Plain JVM
 (Kotlin/Java) compilation that way is solid; full Android APK assembly via Termux is
 labelled experimental in the UI because AGP's own `aapt2` dependency still expects the x86
 artifact unless substituted.
+
+## Database migrations
+
+Room schema v3 adds `chat_sessions.pinned` through a real migration (`MIGRATION_2_3` in
+`AppDatabase`), so upgrading from a v2 build keeps all chats and notes.
 
 ## Building this APK yourself
 

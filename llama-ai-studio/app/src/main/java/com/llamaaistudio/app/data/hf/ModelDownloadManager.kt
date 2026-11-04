@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -50,6 +51,10 @@ class ModelDownloadManager(
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = mutableMapOf<String, Job>()
 
+    private companion object {
+        const val PROGRESS_INTERVAL_MS = 250L
+    }
+
     private fun keyFor(file: GgufFileOption) = "${file.modelId}/${file.filename}"
 
     fun start(file: GgufFileOption) {
@@ -92,40 +97,68 @@ class ModelDownloadManager(
             update(key) { it.copy(status = DownloadStatus.DOWNLOADING) }
             var startByte = if (partFile.exists()) partFile.length() else 0L
 
-            val requestBuilder = Request.Builder().url(file.downloadUrl)
-            if (startByte > 0) requestBuilder.addHeader("Range", "bytes=$startByte-")
+            val alreadyComplete = startByte > 0 && file.sizeBytes > 0 && startByte >= file.sizeBytes
+            if (!alreadyComplete) {
+                val requestBuilder = Request.Builder().url(file.downloadUrl)
+                if (startByte > 0) requestBuilder.addHeader("Range", "bytes=$startByte-")
 
-            val response = client.newCall(requestBuilder.build()).execute()
-            if (!response.isSuccessful) {
-                update(key) { it.copy(status = DownloadStatus.FAILED, error = "HTTP ${response.code}") }
-                return
-            }
+                // use{}: the response (and its pooled connection) was never closed before,
+                // leaking a socket on every failed or paused download.
+                client.newCall(requestBuilder.build()).execute().use { response ->
+                    if (response.code == 416 && startByte > 0) {
+                        // Range not satisfiable: the .part file already holds the whole thing
+                        // (e.g. the app died between finishing and renaming). Verify it below.
+                        return@use
+                    }
+                    if (!response.isSuccessful) {
+                        update(key) { it.copy(status = DownloadStatus.FAILED, error = "HTTP ${response.code}") }
+                        return
+                    }
 
-            val resumed = response.code == 206
-            if (!resumed) startByte = 0L // server ignored Range; restart from scratch
+                    val resumed = response.code == 206
+                    if (!resumed) startByte = 0L // server ignored Range; restart from scratch
 
-            val body = response.body ?: run {
-                update(key) { it.copy(status = DownloadStatus.FAILED, error = "Empty response body") }
-                return
-            }
+                    val body = response.body ?: run {
+                        update(key) { it.copy(status = DownloadStatus.FAILED, error = "Empty response body") }
+                        return
+                    }
 
-            RandomAccessFile(partFile, "rw").use { raf ->
-                if (!resumed) raf.setLength(0)
-                raf.seek(startByte)
-                body.byteStream().use { input ->
-                    val buf = ByteArray(1 shl 16)
-                    var total = startByte
-                    while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        raf.write(buf, 0, n)
-                        total += n
-                        update(key) { it.copy(downloadedBytes = total) }
+                    RandomAccessFile(partFile, "rw").use { raf ->
+                        if (!resumed) raf.setLength(0)
+                        raf.seek(startByte)
+                        body.byteStream().use { input ->
+                            val buf = ByteArray(1 shl 16)
+                            var total = startByte
+                            var lastReport = 0L
+                            while (currentCoroutineContext().isActive) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                raf.write(buf, 0, n)
+                                total += n
+                                // Throttled: one state emission per 64KB chunk meant tens of
+                                // thousands of recompositions per GB downloaded.
+                                val now = System.currentTimeMillis()
+                                if (now - lastReport >= PROGRESS_INTERVAL_MS) {
+                                    lastReport = now
+                                    val snapshot = total
+                                    update(key) { it.copy(downloadedBytes = snapshot) }
+                                }
+                            }
+                            val finalTotal = total
+                            update(key) { it.copy(downloadedBytes = finalTotal) }
+                        }
                     }
                 }
             }
 
-            if (!kotlinx.coroutines.currentCoroutineContext().isActive) return // cancelled -> partial file kept for resume
+            if (!currentCoroutineContext().isActive) return // cancelled -> partial file kept for resume
+
+            if (file.sizeBytes > 0 && partFile.length() < file.sizeBytes) {
+                update(key) {
+                    it.copy(status = DownloadStatus.FAILED, error = "Connection closed early — tap resume to continue")
+                }
+                return
+            }
 
             update(key) { it.copy(status = DownloadStatus.VERIFYING) }
 
@@ -141,7 +174,11 @@ class ModelDownloadManager(
                 }
             }
 
-            partFile.renameTo(destFile)
+            if (destFile.exists()) destFile.delete()
+            if (!partFile.renameTo(destFile)) {
+                update(key) { it.copy(status = DownloadStatus.FAILED, error = "Could not move the finished download into place") }
+                return
+            }
             onComplete(destFile, file, expectedSha, verified)
             update(key) { it.copy(status = DownloadStatus.COMPLETED, downloadedBytes = destFile.length()) }
         } catch (e: Exception) {

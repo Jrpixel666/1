@@ -32,8 +32,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -49,10 +49,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -68,6 +70,8 @@ import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioSuccess
 import com.llamaaistudio.app.ui.theme.StudioTextMuted
 import com.llamaaistudio.imagegen.ImageEngineState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
@@ -199,8 +203,23 @@ private fun LabeledSlider(label: String, value: Float, min: Float, max: Float, o
 }
 
 @Composable
-private fun LocalImage(path: String, modifier: Modifier = Modifier) {
-    val bitmap = remember(path) { BitmapFactory.decodeFile(path)?.asImageBitmap() }
+private fun LocalImage(path: String, modifier: Modifier = Modifier, maxDimension: Int = 1024) {
+    // Decoded off the main thread and downsampled: decoding every full-size PNG synchronously
+    // during composition stalled the UI as soon as the gallery had more than a few images.
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, path, maxDimension) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(path, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= maxDimension || bounds.outHeight / (sample * 2) >= maxDimension) {
+                    sample *= 2
+                }
+                BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+                    ?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
     bitmap?.let {
         Image(
             bitmap = it,
@@ -240,7 +259,9 @@ private fun GalleryItem(image: GeneratedImageEntity, onDelete: () -> Unit) {
         Column(modifier = Modifier.padding(6.dp)) {
             LocalImage(
                 image.filePath,
-                modifier = Modifier.fillMaxWidth().aspectRatio(image.width.toFloat() / image.height)
+                maxDimension = 512,
+                modifier = Modifier.fillMaxWidth()
+                    .aspectRatio(if (image.width > 0 && image.height > 0) image.width.toFloat() / image.height else 1f)
                     .padding(bottom = 4.dp),
             )
             Text(image.prompt, style = MaterialTheme.typography.labelSmall, maxLines = 2)
@@ -299,7 +320,7 @@ private fun ImageModelsTab(viewModel: ImageGenViewModel) {
             }
         }
 
-        Divider(modifier = Modifier.padding(vertical = 8.dp))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
         uiState.expandedDetail?.let { detail ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {

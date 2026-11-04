@@ -15,15 +15,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -36,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -77,7 +77,7 @@ fun NotesScreen(app: LlamaAiStudioApp) {
                     searchQuery = searchQuery,
                     modifier = Modifier.width(320.dp).fillMaxHeight(),
                 )
-                Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
+                VerticalDivider(modifier = Modifier.fillMaxHeight())
                 if (selectedNoteId != null) {
                     NoteEditorPane(app, viewModel, selectedNoteId!!, modifier = Modifier.weight(1f))
                 } else {
@@ -247,7 +247,10 @@ private fun NoteEditorPane(
     var showPreview by remember { mutableStateOf(false) }
 
     // Debounced autosave: coalesce rapid keystrokes into one write ~500ms after the user pauses.
+    // Skips the no-op save on first composition, which used to bump updatedAt (and reshuffle
+    // the notes list) just from opening a note.
     LaunchedEffect(title, content) {
+        if (title == current.title && content == current.content) return@LaunchedEffect
         delay(500)
         viewModel.save(current, title, content)
     }
@@ -255,7 +258,7 @@ private fun NoteEditorPane(
     Column(modifier = modifier.fillMaxSize().padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { viewModel.selectNote(null) }) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
             OutlinedTextField(
                 value = title,
@@ -265,7 +268,7 @@ private fun NoteEditorPane(
                 textStyle = MaterialTheme.typography.titleMedium,
             )
             IconButton(onClick = { viewModel.sendToChat(current) }) {
-                Icon(Icons.Filled.Send, contentDescription = "Send to chat", tint = StudioOrange)
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send to chat", tint = StudioOrange)
             }
             IconButton(onClick = { viewModel.summarize(current) }, enabled = !isSummarizing) {
                 if (isSummarizing) {

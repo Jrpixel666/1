@@ -11,29 +11,41 @@ import com.llamaaistudio.app.data.db.LocalModelEntity
 import com.llamaaistudio.app.data.repo.ChatRepository
 import com.llamaaistudio.app.data.repo.DEFAULT_SYSTEM_PROMPT
 import com.llamaaistudio.app.data.repo.ModelRepository
+import com.llamaaistudio.app.data.repo.NotesRepository
 import com.llamaaistudio.app.engine.EngineState
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class ChatUiState(
     val sessions: List<ChatSessionEntity> = emptyList(),
     val currentSessionId: Long? = null,
     val messages: List<ChatMessageEntity> = emptyList(),
+    /** Session the in-flight reply belongs to (may differ from the one on screen). */
+    val generatingSessionId: Long? = null,
     val streamingText: String = "",
     val isGenerating: Boolean = false,
     val liveGenTps: Double = 0.0,
     val error: String? = null,
-)
+    val info: String? = null,
+) {
+    val currentSession: ChatSessionEntity? get() = sessions.find { it.id == currentSessionId }
+}
 
 class ChatViewModel(
     private val chatRepository: ChatRepository,
     private val modelRepository: ModelRepository,
+    private val notesRepository: NotesRepository,
     private val llamaEngine: LlamaEngine,
     private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
@@ -55,11 +67,14 @@ class ChatViewModel(
             // more often than not.
             val settings = settingsRepository.settings.first()
             genParams.update { settings.chatParams }
-            val preferredSessionId = settings.lastChatSessionId
+            val preferredSessionId = chatRepository.activeSessionId.value ?: settings.lastChatSessionId
+
+            launch { observeActiveSession() }
 
             chatRepository.sessions.collect { sessions ->
-                _uiState.value = _uiState.value.copy(sessions = sessions)
-                if (_uiState.value.currentSessionId == null) {
+                _uiState.update { it.copy(sessions = sessions) }
+                val active = chatRepository.activeSessionId.value
+                if (active == null || sessions.none { it.id == active }) {
                     when {
                         sessions.isNotEmpty() -> {
                             val preferred = preferredSessionId?.let { id -> sessions.find { it.id == id } }
@@ -73,29 +88,38 @@ class ChatViewModel(
                             newSession()
                         }
                     }
+                } else {
+                    createdDefaultSession = false
                 }
             }
         }
+    }
+
+    /**
+     * Follows the app-wide active session (which the Sessions workspace can also change) and
+     * streams exactly one session's messages at a time. The previous implementation launched a
+     * new, never-cancelled collector on every switch, so each switch leaked a Room observer.
+     */
+    private suspend fun observeActiveSession() {
+        // StateFlow already only emits distinct values.
+        chatRepository.activeSessionId
+            .flatMapLatest { id ->
+                _uiState.update { it.copy(currentSessionId = id, messages = emptyList()) }
+                if (id == null) emptyFlow() else chatRepository.messages(id)
+            }
+            .collectLatest { msgs -> _uiState.update { it.copy(messages = msgs) } }
     }
 
     fun selectSession(sessionId: Long) {
-        _uiState.value = _uiState.value.copy(currentSessionId = sessionId, messages = emptyList())
+        chatRepository.setActiveSession(sessionId)
         viewModelScope.launch { settingsRepository.setLastChatSessionId(sessionId) }
-        viewModelScope.launch {
-            chatRepository.messages(sessionId).collect { msgs ->
-                if (_uiState.value.currentSessionId == sessionId) {
-                    _uiState.value = _uiState.value.copy(messages = msgs)
-                }
-            }
-        }
     }
 
-    fun newSession(title: String = "New chat") {
+    fun newSession() {
         viewModelScope.launch {
             val id = chatRepository.createSession(
-                title = title,
                 systemPrompt = DEFAULT_SYSTEM_PROMPT,
-                modelFilePath = (engineState.value as? EngineState.Ready)?.modelPath,
+                modelFilePath = llamaEngine.currentModelPath(),
             )
             selectSession(id)
         }
@@ -103,10 +127,41 @@ class ChatViewModel(
 
     fun deleteSession(sessionId: Long) {
         viewModelScope.launch {
+            if (_uiState.value.generatingSessionId == sessionId) stopGeneration()
             chatRepository.deleteSession(sessionId)
-            if (_uiState.value.currentSessionId == sessionId) {
-                _uiState.value = _uiState.value.copy(currentSessionId = null, messages = emptyList())
-            }
+            // The sessions collector picks the next most recent session (or creates one).
+        }
+    }
+
+    fun renameCurrentSession(title: String) {
+        val id = _uiState.value.currentSessionId ?: return
+        viewModelScope.launch { chatRepository.renameSession(id, title) }
+    }
+
+    fun updateCurrentSystemPrompt(prompt: String) {
+        val id = _uiState.value.currentSessionId ?: return
+        viewModelScope.launch { chatRepository.updateSystemPrompt(id, prompt) }
+    }
+
+    fun clearCurrentSession() {
+        val id = _uiState.value.currentSessionId ?: return
+        if (_uiState.value.generatingSessionId == id) stopGeneration()
+        viewModelScope.launch { chatRepository.clearMessages(id) }
+    }
+
+    fun exportCurrentSessionToNote() {
+        val id = _uiState.value.currentSessionId ?: return
+        viewModelScope.launch {
+            val (title, markdown) = chatRepository.exportAsMarkdown(id) ?: return@launch
+            notesRepository.saveChatMessageAsNote(markdown, title = title)
+            _uiState.update { it.copy(info = "Saved \"$title\" to Notes") }
+        }
+    }
+
+    fun saveMessageAsNote(content: String) {
+        viewModelScope.launch {
+            notesRepository.saveChatMessageAsNote(content)
+            _uiState.update { it.copy(info = "Saved to Notes") }
         }
     }
 
@@ -121,16 +176,17 @@ class ChatViewModel(
             if (result.isSuccess) {
                 modelRepository.markUsed(model.filePath)
             } else {
-                _uiState.value = _uiState.value.copy(error = result.exceptionOrNull()?.message)
+                _uiState.update { it.copy(error = result.exceptionOrNull()?.message) }
             }
         }
     }
 
-    private var generationJob: kotlinx.coroutines.Job? = null
+    private var generationJob: Job? = null
 
     fun stopGeneration() {
         generationJob?.cancel()
-        _uiState.value = _uiState.value.copy(isGenerating = false, streamingText = "")
+        generationJob = null
+        _uiState.update { it.copy(isGenerating = false, streamingText = "", generatingSessionId = null) }
     }
 
     fun sendMessage(text: String) {
@@ -140,32 +196,44 @@ class ChatViewModel(
             // Fetched directly rather than from the in-memory sessions list: right after
             // newSession() the list may not have caught up with the just-inserted row yet.
             val session = chatRepository.getSession(sessionId) ?: return@launch
-            _uiState.value = _uiState.value.copy(isGenerating = true, streamingText = "", error = null)
+            _uiState.update {
+                it.copy(isGenerating = true, generatingSessionId = sessionId, streamingText = "", error = null)
+            }
             val startTime = System.currentTimeMillis()
             var tokenCount = 0
+            val streamed = StringBuilder()
             chatRepository.sendMessage(session, text, genParams.value).collect { event ->
                 when (event) {
                     is GenerationEvent.Token -> {
                         tokenCount++
+                        streamed.append(event.piece)
                         val elapsedS = (System.currentTimeMillis() - startTime) / 1000.0
-                        _uiState.value = _uiState.value.copy(
-                            streamingText = _uiState.value.streamingText + event.piece,
-                            liveGenTps = if (elapsedS > 0) tokenCount / elapsedS else 0.0,
-                        )
+                        _uiState.update {
+                            it.copy(
+                                streamingText = streamed.toString(),
+                                liveGenTps = if (elapsedS > 0) tokenCount / elapsedS else 0.0,
+                            )
+                        }
                     }
                     is GenerationEvent.Done -> {
-                        _uiState.value = _uiState.value.copy(
-                            isGenerating = false,
-                            streamingText = "",
-                            liveGenTps = event.stats.genTps,
-                        )
+                        _uiState.update {
+                            it.copy(
+                                isGenerating = false,
+                                generatingSessionId = null,
+                                streamingText = "",
+                                liveGenTps = event.stats.genTps,
+                            )
+                        }
                     }
                     is GenerationEvent.Failed -> {
-                        _uiState.value = _uiState.value.copy(
-                            isGenerating = false,
-                            streamingText = "",
-                            error = event.reason,
-                        )
+                        _uiState.update {
+                            it.copy(
+                                isGenerating = false,
+                                generatingSessionId = null,
+                                streamingText = "",
+                                error = event.reason,
+                            )
+                        }
                     }
                 }
             }
@@ -173,13 +241,23 @@ class ChatViewModel(
     }
 
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.update { it.copy(error = null) }
+    }
+
+    fun clearInfo() {
+        _uiState.update { it.copy(info = null) }
     }
 
     class Factory(private val app: LlamaAiStudioApp) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(app.chatRepository, app.modelRepository, app.llamaEngine, app.settingsRepository) as T
+            ChatViewModel(
+                app.chatRepository,
+                app.modelRepository,
+                app.notesRepository,
+                app.llamaEngine,
+                app.settingsRepository,
+            ) as T
     }
 }
 

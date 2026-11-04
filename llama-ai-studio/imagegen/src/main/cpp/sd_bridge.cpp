@@ -28,6 +28,8 @@ std::string jsonEscape(const std::string &in) {
             case '"': out += "\\\""; break;
             case '\\': out += "\\\\"; break;
             case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
             default:
                 if (static_cast<unsigned char>(c) < 0x20) {
                     char buf[8];
@@ -51,6 +53,8 @@ void progressTrampoline(int step, int steps, float time, void *data) {
     auto *ctx = reinterpret_cast<ProgressCtx *>(data);
     if (ctx == nullptr || ctx->env == nullptr || ctx->callback == nullptr || ctx->mid == nullptr) return;
     ctx->env->CallVoidMethod(ctx->callback, ctx->mid, step, steps, time);
+    // Never leave a Java exception pending while native code keeps calling into JNI.
+    if (ctx->env->ExceptionCheck()) ctx->env->ExceptionClear();
 }
 
 } // namespace
@@ -117,7 +121,12 @@ Java_com_llamaaistudio_imagegen_SdNative_generateImage(
     ProgressCtx progressCtx;
     progressCtx.env = env;
     progressCtx.callback = callback;
-    progressCtx.mid = env->GetMethodID(env->GetObjectClass(callback), "onProgress", "(IIF)V");
+    if (callback != nullptr) {
+        jclass cbClass = env->GetObjectClass(callback);
+        progressCtx.mid = env->GetMethodID(cbClass, "onProgress", "(IIF)V");
+        env->DeleteLocalRef(cbClass);
+        if (progressCtx.mid == nullptr && env->ExceptionCheck()) env->ExceptionClear();
+    }
     sd_set_progress_callback(progressTrampoline, &progressCtx);
 
     sd_img_gen_params_t params;

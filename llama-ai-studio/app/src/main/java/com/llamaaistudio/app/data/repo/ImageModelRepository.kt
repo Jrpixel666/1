@@ -3,7 +3,9 @@ package com.llamaaistudio.app.data.repo
 import android.content.Context
 import com.llamaaistudio.app.data.db.LocalImageModelDao
 import com.llamaaistudio.app.data.db.LocalImageModelEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class ImageModelRepository(
@@ -18,11 +20,12 @@ class ImageModelRepository(
 
     suspend fun getMostRecentlyUsed(): LocalImageModelEntity? = dao.getMostRecentlyUsed()
 
-    suspend fun deleteModel(model: LocalImageModelEntity): Boolean {
+    // Multi-GB checkpoint deletes can take a while on flash storage; never on the main thread.
+    suspend fun deleteModel(model: LocalImageModelEntity): Boolean = withContext(Dispatchers.IO) {
         val file = File(model.filePath)
         val deleted = !file.exists() || file.delete()
         if (deleted) dao.delete(model.filePath)
-        return deleted
+        deleted
     }
 
     suspend fun registerModel(

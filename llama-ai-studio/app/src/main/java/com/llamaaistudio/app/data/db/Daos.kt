@@ -9,6 +9,13 @@ import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+private const val SESSION_SUMMARY_SELECT =
+    "SELECT s.*, " +
+        "(SELECT COUNT(*) FROM chat_messages c WHERE c.sessionId = s.id) AS messageCount, " +
+        "(SELECT l.content FROM chat_messages l WHERE l.sessionId = s.id " +
+        "ORDER BY l.createdAt DESC, l.id DESC LIMIT 1) AS lastMessage " +
+        "FROM chat_sessions s"
+
 @Dao
 interface ChatDao {
     @Query("SELECT * FROM chat_sessions ORDER BY updatedAt DESC")
@@ -38,9 +45,48 @@ interface ChatDao {
     @Update
     suspend fun updateMessage(message: ChatMessageEntity)
 
+    @Query("UPDATE chat_sessions SET updatedAt = :timestamp WHERE id = :sessionId")
+    suspend fun touchSession(sessionId: Long, timestamp: Long)
+
+    @Query(SESSION_SUMMARY_SELECT + " ORDER BY s.pinned DESC, s.updatedAt DESC")
+    fun observeSessionSummaries(): Flow<List<ChatSessionSummary>>
+
+    @Query(
+        SESSION_SUMMARY_SELECT +
+            " WHERE s.title LIKE '%' || :query || '%' OR EXISTS (" +
+            "SELECT 1 FROM chat_messages q WHERE q.sessionId = s.id AND q.content LIKE '%' || :query || '%')" +
+            " ORDER BY s.pinned DESC, s.updatedAt DESC"
+    )
+    fun searchSessionSummaries(query: String): Flow<List<ChatSessionSummary>>
+
+    @Query("UPDATE chat_sessions SET title = :title, updatedAt = :timestamp WHERE id = :id")
+    suspend fun renameSession(id: Long, title: String, timestamp: Long)
+
+    @Query("UPDATE chat_sessions SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinned(id: Long, pinned: Boolean)
+
+    @Query("UPDATE chat_sessions SET systemPrompt = :systemPrompt, updatedAt = :timestamp WHERE id = :id")
+    suspend fun updateSystemPrompt(id: Long, systemPrompt: String, timestamp: Long)
+
+    @Query("UPDATE chat_sessions SET modelFilePath = :modelFilePath WHERE id = :id")
+    suspend fun updateModel(id: Long, modelFilePath: String?)
+
+    @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
+    suspend fun clearMessages(sessionId: Long)
+
+    @Query("SELECT COUNT(*) FROM chat_messages WHERE sessionId = :sessionId AND role = 'user'")
+    suspend fun countUserMessages(sessionId: Long): Int
+
+    @Insert
+    suspend fun insertMessages(messages: List<ChatMessageEntity>)
+
     @Transaction
-    suspend fun touchSession(sessionId: Long, timestamp: Long) {
-        getSession(sessionId)?.let { updateSession(it.copy(updatedAt = timestamp)) }
+    suspend fun duplicateSession(sourceId: Long, newTitle: String): Long? {
+        val source = getSession(sourceId) ?: return null
+        val now = System.currentTimeMillis()
+        val newId = insertSession(source.copy(id = 0, title = newTitle, pinned = false, createdAt = now, updatedAt = now))
+        insertMessages(getMessages(sourceId).map { it.copy(id = 0, sessionId = newId) })
+        return newId
     }
 }
 
@@ -49,7 +95,8 @@ interface NoteDao {
     @Query("SELECT * FROM notes ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<NoteEntity>>
 
-    @Query("SELECT * FROM notes WHERE folderId = :folderId ORDER BY updatedAt DESC")
+    // `folderId = NULL` is never true in SQL; `IS` matches NULL too, so the "unfiled" case works.
+    @Query("SELECT * FROM notes WHERE folderId IS :folderId ORDER BY updatedAt DESC")
     fun observeByFolder(folderId: Long?): Flow<List<NoteEntity>>
 
     @Query(
@@ -69,6 +116,17 @@ interface NoteDao {
 
     @Update
     suspend fun update(note: NoteEntity)
+
+    // Targeted column updates: writing back a whole (possibly stale) NoteEntity snapshot let
+    // a finishing AI summary overwrite edits typed while it ran, and vice versa.
+    @Query("UPDATE notes SET title = :title, content = :content, updatedAt = :timestamp WHERE id = :id")
+    suspend fun updateContent(id: Long, title: String, content: String, timestamp: Long)
+
+    @Query("UPDATE notes SET aiSummary = :summary WHERE id = :id")
+    suspend fun updateSummary(id: Long, summary: String?)
+
+    @Query("UPDATE notes SET folderId = :folderId, updatedAt = :timestamp WHERE id = :id")
+    suspend fun updateFolder(id: Long, folderId: Long?, timestamp: Long)
 
     @Delete
     suspend fun delete(note: NoteEntity)

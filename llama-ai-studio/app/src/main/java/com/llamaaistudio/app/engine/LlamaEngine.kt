@@ -1,16 +1,23 @@
 package com.llamaaistudio.app.engine
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class ChatTurn(val role: String, val content: String)
@@ -91,6 +98,8 @@ class LlamaEngine(
 
     val isLoaded: Boolean get() = handle != 0L
 
+    fun currentModelPath(): String? = (_state.value as? EngineState.Ready)?.modelPath
+
     suspend fun loadModel(path: String, params: ModelLoadParams): Result<ModelInfo> =
         withContext(backgroundDispatcher) {
             unloadInternal()
@@ -141,56 +150,82 @@ class LlamaEngine(
 
         val callback = object : LlamaNative.TokenCallback {
             override fun onToken(piece: String): Boolean {
-                val sent = trySend(GenerationEvent.Token(piece)).isSuccess
-                return sent && !isClosedForSend
+                // The channel is unbounded (see .buffer below), so this only fails once the
+                // collector has gone away — i.e. the user pressed Stop / left the screen.
+                return trySend(GenerationEvent.Token(piece)).isSuccess
             }
         }
 
-        withContext(backgroundDispatcher) {
-            val seed = if (params.seed >= 0) params.seed else seedCounter.incrementAndGet()
-            val messagesJson = JSONArray().apply {
-                messages.forEach { turn ->
-                    put(JSONObject().put("role", turn.role).put("content", turn.content))
+        // The native call below blocks its thread until generation ends, so awaitClose{} only
+        // runs afterwards and can't be what stops it. This sibling coroutine is cancelled the
+        // moment the collector goes away (Stop button, screen left) and flips the native
+        // cancel flag right then.
+        val finished = AtomicBoolean(false)
+        val cancelWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                if (!finished.get()) LlamaNative.cancelGeneration(h)
+            }
+        }
+
+        try {
+            withContext(backgroundDispatcher) {
+                ensureActive() // stopped while queued behind another job on the inference thread
+                // The model may have been swapped/unloaded while this call was queued behind
+                // another generation on the single inference thread.
+                if (handle != h) {
+                    trySend(GenerationEvent.Failed("Model was unloaded"))
+                    return@withContext
                 }
-            }.toString()
-            val resultJson = LlamaNative.generate(
-                h,
-                messagesJson,
-                params.maxTokens,
-                params.temperature,
-                params.topK,
-                params.topP,
-                params.minP,
-                params.repeatPenalty,
-                params.repeatLastN,
-                seed,
-                callback,
-            )
-            val obj = JSONObject(resultJson)
-            if (obj.has("error")) {
-                trySend(GenerationEvent.Failed(obj.getString("error")))
-            } else {
-                trySend(
-                    GenerationEvent.Done(
-                        GenerationStats(
-                            promptTokens = obj.getInt("promptTokens"),
-                            genTokens = obj.getInt("genTokens"),
-                            prefillMs = obj.getDouble("prefillMs"),
-                            genMs = obj.getDouble("genMs"),
-                            promptTps = obj.getDouble("promptTps"),
-                            genTps = obj.getDouble("genTps"),
-                            stopReason = obj.getString("stopReason"),
+                val seed = if (params.seed >= 0) params.seed else seedCounter.incrementAndGet()
+                val messagesJson = JSONArray().apply {
+                    messages.forEach { turn ->
+                        put(JSONObject().put("role", turn.role).put("content", turn.content))
+                    }
+                }.toString()
+                val resultJson = LlamaNative.generate(
+                    h,
+                    messagesJson,
+                    params.maxTokens,
+                    params.temperature,
+                    params.topK,
+                    params.topP,
+                    params.minP,
+                    params.repeatPenalty,
+                    params.repeatLastN,
+                    seed,
+                    callback,
+                )
+                val obj = JSONObject(resultJson)
+                if (obj.has("error")) {
+                    trySend(GenerationEvent.Failed(obj.getString("error")))
+                } else {
+                    trySend(
+                        GenerationEvent.Done(
+                            GenerationStats(
+                                promptTokens = obj.getInt("promptTokens"),
+                                genTokens = obj.getInt("genTokens"),
+                                prefillMs = obj.getDouble("prefillMs"),
+                                genMs = obj.getDouble("genMs"),
+                                promptTps = obj.getDouble("promptTps"),
+                                genTps = obj.getDouble("genTps"),
+                                stopReason = obj.getString("stopReason"),
+                            )
                         )
                     )
-                )
+                }
             }
+        } finally {
+            finished.set(true)
+            cancelWatcher.cancel()
         }
         close()
-
-        awaitClose {
-            if (h != 0L) LlamaNative.cancelGeneration(h)
-        }
+        awaitClose { }
     }
+        // Default callbackFlow buffer is 64 elements and trySend() fails when it's full, which
+        // made long replies stop dead mid-sentence whenever the UI fell briefly behind.
+        .buffer(Channel.UNLIMITED)
 
     fun tokenCount(text: String): Int {
         val h = handle

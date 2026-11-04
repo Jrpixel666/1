@@ -1,16 +1,23 @@
 package com.llamaaistudio.imagegen
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class ImageModelInfo(val path: String, val supportsImageGeneration: Boolean)
@@ -108,33 +115,55 @@ class ImageGenEngine(
             }
         }
 
-        withContext(backgroundDispatcher) {
-            val seed = if (params.seed >= 0) params.seed else seedCounter.incrementAndGet()
-            val resultJson = SdNative.generateImage(
-                h, prompt, negativePrompt, params.width, params.height, params.steps,
-                params.cfgScale, seed, outputFile.absolutePath, callback,
-            )
-            val obj = JSONObject(resultJson)
-            if (obj.has("error")) {
-                trySend(ImageGenEvent.Failed(obj.getString("error")))
-            } else {
-                trySend(
-                    ImageGenEvent.Done(
-                        outputFile,
-                        ImageGenStats(
-                            widthOut = obj.getInt("widthOut"),
-                            heightOut = obj.getInt("heightOut"),
-                            genMs = obj.getDouble("genMs"),
-                            seedUsed = obj.getLong("seedUsed"),
-                        ),
-                    )
-                )
+        // The native call below blocks its thread until generation ends, so awaitClose{} only
+        // runs afterwards and can't be what stops it. This sibling coroutine is cancelled the
+        // moment the collector goes away (Stop button, screen left) and flips the native
+        // cancel flag right then.
+        val finished = AtomicBoolean(false)
+        val cancelWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                if (!finished.get()) SdNative.cancelGeneration(h)
             }
         }
-        close()
 
-        awaitClose {
-            if (h != 0L) SdNative.cancelGeneration(h)
+        try {
+            withContext(backgroundDispatcher) {
+                ensureActive() // stopped while queued behind another job on the inference thread
+                if (handle != h) {
+                    trySend(ImageGenEvent.Failed("Diffusion model was unloaded"))
+                    return@withContext
+                }
+                val seed = if (params.seed >= 0) params.seed else seedCounter.incrementAndGet()
+                val resultJson = SdNative.generateImage(
+                    h, prompt, negativePrompt, params.width, params.height, params.steps,
+                    params.cfgScale, seed, outputFile.absolutePath, callback,
+                )
+                val obj = JSONObject(resultJson)
+                if (obj.has("error")) {
+                    trySend(ImageGenEvent.Failed(obj.getString("error")))
+                } else {
+                    trySend(
+                        ImageGenEvent.Done(
+                            outputFile,
+                            ImageGenStats(
+                                widthOut = obj.getInt("widthOut"),
+                                heightOut = obj.getInt("heightOut"),
+                                genMs = obj.getDouble("genMs"),
+                                seedUsed = obj.getLong("seedUsed"),
+                            ),
+                        )
+                    )
+                }
+            }
+        } finally {
+            finished.set(true)
+            cancelWatcher.cancel()
         }
+        close()
+        awaitClose { }
     }
+        // Progress events must never crowd out the final Done/Failed event.
+        .buffer(Channel.UNLIMITED)
 }

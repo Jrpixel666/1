@@ -73,6 +73,7 @@ class NotesViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun summarize(note: NoteEntity) {
+        if (_isSummarizing.value) return
         viewModelScope.launch {
             _isSummarizing.value = true
             _summaryError.value = null
@@ -83,7 +84,12 @@ class NotesViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun observeNote(id: Long) = repo.observeNote(id)
-    fun notesIn(folderId: Long?) = if (_searchQuery.value.isBlank()) repo.notes(folderId) else repo.search(_searchQuery.value)
+    /** "All" (null folder) means every note — not just unfiled ones. */
+    fun notesIn(folderId: Long?) = when {
+        _searchQuery.value.isNotBlank() -> repo.search(_searchQuery.value)
+        folderId == null -> repo.allNotes()
+        else -> repo.notes(folderId)
+    }
 
     class Factory(private val app: LlamaAiStudioApp) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

@@ -15,8 +15,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -155,7 +155,7 @@ private fun ProjectDetailScreen(
         ) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 IconButton(onClick = { viewModel.closeProject() }) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Text(project.name, style = MaterialTheme.typography.titleLarge)
             }
@@ -312,7 +312,7 @@ private fun FileEditorScreen(viewModel: DevStudioViewModel, uiState: DevStudioUi
         Column(modifier = Modifier.padding(padding).fillMaxSize().padding(12.dp)) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 IconButton(onClick = { viewModel.closeFile() }) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Text(file.name + if (uiState.dirty) " *" else "", style = MaterialTheme.typography.titleMedium)
             }

@@ -1,17 +1,19 @@
 package com.llamaaistudio.app.ui.nav
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -33,6 +35,7 @@ import com.llamaaistudio.app.ui.huggingface.ModelsScreen
 import com.llamaaistudio.app.ui.image.ImageGenScreen
 import com.llamaaistudio.app.ui.notes.NotesScreen
 import com.llamaaistudio.app.ui.perf.PerformanceScreen
+import com.llamaaistudio.app.ui.sessions.SessionsScreen
 
 enum class StudioDestination(
     val route: String,
@@ -40,12 +43,13 @@ enum class StudioDestination(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 ) {
-    Chat("chat", "Chat", Icons.Filled.Chat, Icons.Outlined.Chat),
-    Notes("notes", "Notes", Icons.Filled.Notes, Icons.Outlined.Notes),
+    Chat("chat", "Chat", Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat),
+    Sessions("sessions", "Sessions", Icons.Filled.Forum, Icons.Outlined.Forum),
+    Notes("notes", "Notes", Icons.AutoMirrored.Filled.Notes, Icons.AutoMirrored.Outlined.Notes),
     Image("image", "Image", Icons.Filled.Image, Icons.Outlined.Image),
     Models("models", "Models", Icons.Filled.Download, Icons.Outlined.Download),
-    Dev("dev", "Dev Studio", Icons.Filled.Code, Icons.Outlined.Code),
-    Perf("perf", "Performance", Icons.Filled.Speed, Icons.Outlined.Speed),
+    Dev("dev", "Dev", Icons.Filled.Code, Icons.Outlined.Code),
+    Perf("perf", "Perf", Icons.Filled.Speed, Icons.Outlined.Speed),
 }
 
 @Composable
@@ -58,22 +62,14 @@ fun StudioBottomBar(navController: NavHostController) {
             val selected = currentRoute == dest.route
             NavigationBarItem(
                 selected = selected,
-                onClick = {
-                    navController.navigate(dest.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
+                onClick = { navController.navigateToTab(dest) },
                 icon = {
                     Icon(
                         imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
                         contentDescription = dest.label,
                     )
                 },
-                label = { Text(dest.label) },
+                label = { Text(dest.label, maxLines = 1, softWrap = false) },
             )
         }
     }
@@ -83,7 +79,10 @@ fun StudioBottomBar(navController: NavHostController) {
 fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
     NavHost(navController = navController, startDestination = StudioDestination.Chat.route) {
         composable(StudioDestination.Chat.route) {
-            ChatScreen(app = app)
+            ChatScreen(app = app, onOpenSessions = { navController.navigateToTab(StudioDestination.Sessions) })
+        }
+        composable(StudioDestination.Sessions.route) {
+            SessionsScreen(app = app, onOpenChat = { navController.navigateToTab(StudioDestination.Chat) })
         }
         composable(StudioDestination.Notes.route) {
             NotesScreen(app = app)
@@ -100,5 +99,16 @@ fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
         composable(StudioDestination.Perf.route) {
             PerformanceScreen(app = app)
         }
+    }
+}
+
+/** Tab-style navigation: one copy of each top-level destination, state saved/restored. */
+fun NavHostController.navigateToTab(dest: StudioDestination) {
+    navigate(dest.route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
     }
 }

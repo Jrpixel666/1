@@ -17,6 +17,7 @@ import com.llamaaistudio.imagegen.ImageGenParams
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -58,11 +59,11 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         viewModelScope.launch {
             val restored = app.settingsRepository.settings.first().imageParams
             genParams.update { restored }
-        }
-        viewModelScope.launch {
-            // Persists every change (including the restore above) so slider positions survive
-            // the app being closed and reopened instead of resetting to defaults each time.
-            genParams.flow.collect { params -> app.settingsRepository.setImageParams(params) }
+            // Persist every later change so slider positions survive the app being closed and
+            // reopened. Started only after the restore: collecting in a separate coroutine (as
+            // before) wrote the *default* params to DataStore before the saved ones were read
+            // back, so the user's settings were frequently reset on launch.
+            genParams.flow.drop(1).collect { params -> app.settingsRepository.setImageParams(params) }
         }
     }
 
@@ -86,7 +87,15 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun deleteModel(model: LocalImageModelEntity) {
-        viewModelScope.launch { app.imageModelRepository.deleteModel(model) }
+        viewModelScope.launch {
+            if ((engineState.value as? ImageEngineState.Ready)?.modelPath == model.filePath) {
+                if (_uiState.value.isGenerating) stopGeneration()
+                engine.unloadModel()
+            }
+            if (!app.imageModelRepository.deleteModel(model)) {
+                _uiState.value = _uiState.value.copy(error = "Could not delete ${model.displayName}")
+            }
+        }
     }
 
     private var generationJob: kotlinx.coroutines.Job? = null
@@ -98,6 +107,10 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     fun generate(prompt: String, negativePrompt: String) {
         if (_uiState.value.isGenerating || prompt.isBlank()) return
+        if (engineState.value !is ImageEngineState.Ready) {
+            _uiState.value = _uiState.value.copy(error = "Load a diffusion model first")
+            return
+        }
         val modelPath = (engineState.value as? ImageEngineState.Ready)?.modelPath
         generationJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isGenerating = true, currentStep = 0, totalSteps = 0, error = null)
@@ -121,8 +134,8 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                             modelFilePath = modelPath,
                             genMs = event.stats.genMs,
                         )
-                        app.imageGalleryRepository.record(entity)
-                        _uiState.value = _uiState.value.copy(isGenerating = false, lastImage = entity)
+                        val id = app.imageGalleryRepository.record(entity)
+                        _uiState.value = _uiState.value.copy(isGenerating = false, lastImage = entity.copy(id = id))
                     }
                     is ImageGenEvent.Failed -> {
                         _uiState.value = _uiState.value.copy(isGenerating = false, error = event.reason)

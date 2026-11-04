@@ -1,8 +1,8 @@
 package com.llamaaistudio.app.data.repo
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
-import android.os.Build
 import android.provider.MediaStore
 import com.llamaaistudio.app.data.db.DevProjectDao
 import com.llamaaistudio.app.data.db.DevProjectEntity
@@ -63,17 +63,27 @@ class DevProjectRepository(
             val dirPart = relPath.substringBeforeLast('/', "")
             val targetRelativePath = if (dirPart.isEmpty()) relativeBase else "$relativeBase$dirPart/"
 
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, targetRelativePath)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-            }
-            val uri = context.contentResolver.insert(
-                if (Build.VERSION.SDK_INT >= 29) MediaStore.Downloads.EXTERNAL_CONTENT_URI
-                else MediaStore.Files.getContentUri("external"),
-                values,
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI // minSdk 31
+            // Re-exporting used to insert a fresh row every time; MediaStore then renamed the
+            // new copy ("MainActivity (1).kt") and Termux kept building the stale original.
+            // Overwrite our own earlier export of the same path instead.
+            val existing = context.contentResolver.query(
+                collection,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf(targetRelativePath, file.name),
+                null,
+            )?.use { c -> if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null }
+
+            val uri = existing ?: context.contentResolver.insert(
+                collection,
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, targetRelativePath)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                },
             ) ?: continue
-            context.contentResolver.openOutputStream(uri)?.use { out ->
+            context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
                 file.inputStream().use { it.copyTo(out) }
             }
         }
@@ -81,6 +91,10 @@ class DevProjectRepository(
     }
 
     private fun scaffold(root: File, name: String, template: String) {
+        // Project names may contain '-' or start with a digit; neither is legal in a Kotlin
+        // package / applicationId segment.
+        val pkg = name.lowercase().replace(Regex("[^a-z0-9_]"), "_")
+            .let { if (it.first().isDigit()) "p_$it" else it }
         File(root, "settings.gradle.kts").writeText(
             """
             pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -105,10 +119,10 @@ class DevProjectRepository(
                 id("org.jetbrains.kotlin.android")
             }
             android {
-                namespace = "com.example.$name"
+                namespace = "com.example.$pkg"
                 compileSdk = 35
                 defaultConfig {
-                    applicationId = "com.example.$name"
+                    applicationId = "com.example.$pkg"
                     minSdk = 26
                     targetSdk = 35
                     versionCode = 1
@@ -121,11 +135,11 @@ class DevProjectRepository(
             }
             """.trimIndent()
         )
-        val pkgDir = File(appDir, "java/com/example/$name").apply { mkdirs() }
+        val pkgDir = File(appDir, "java/com/example/$pkg").apply { mkdirs() }
         when (template) {
             "empty-compose" -> File(pkgDir, "MainActivity.kt").writeText(
                 """
-                package com.example.$name
+                package com.example.$pkg
 
                 import android.app.Activity
                 import android.os.Bundle
@@ -141,7 +155,7 @@ class DevProjectRepository(
             )
             else -> File(pkgDir, "Main.kt").writeText(
                 """
-                package com.example.$name
+                package com.example.$pkg
 
                 fun main() {
                     println("Hello from $name")

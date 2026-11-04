@@ -91,7 +91,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     fun loadModel(model: LocalModelEntity) {
         viewModelScope.launch {
             val settings = app.settingsRepository.settings.first()
-            app.llamaEngine.loadModel(
+            val result = app.llamaEngine.loadModel(
                 model.filePath,
                 ModelLoadParams(
                     contextLength = settings.contextLength,
@@ -100,12 +100,19 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                     useMlock = settings.useMlock,
                 ),
             )
-            app.modelRepository.markUsed(model.filePath)
+            // Only a successful load becomes "last used" — otherwise a broken file would be
+            // retried automatically on every app launch.
+            if (result.isSuccess) app.modelRepository.markUsed(model.filePath)
         }
     }
 
     fun deleteModel(model: LocalModelEntity) {
-        viewModelScope.launch { app.modelRepository.deleteModel(model) }
+        viewModelScope.launch {
+            if (app.llamaEngine.currentModelPath() == model.filePath) app.llamaEngine.unloadModel()
+            if (!app.modelRepository.deleteModel(model)) {
+                _uiState.value = _uiState.value.copy(error = "Could not delete ${model.displayName}")
+            }
+        }
     }
 
     fun clearError() {

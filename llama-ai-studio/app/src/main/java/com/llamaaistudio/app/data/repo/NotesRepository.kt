@@ -31,17 +31,11 @@ class NotesRepository(
 
     /** Debounced autosave target: callers should coalesce keystrokes before calling this. */
     suspend fun saveContent(note: NoteEntity, newTitle: String, newContent: String) {
-        noteDao.update(
-            note.copy(
-                title = newTitle,
-                content = newContent,
-                updatedAt = System.currentTimeMillis(),
-            )
-        )
+        noteDao.updateContent(note.id, newTitle, newContent, System.currentTimeMillis())
     }
 
     suspend fun moveNote(note: NoteEntity, folderId: Long?) {
-        noteDao.update(note.copy(folderId = folderId, updatedAt = System.currentTimeMillis()))
+        noteDao.updateFolder(note.id, folderId, System.currentTimeMillis())
     }
 
     suspend fun deleteNote(note: NoteEntity) = noteDao.delete(note)
@@ -53,6 +47,9 @@ class NotesRepository(
     suspend fun summarizeWithAi(note: NoteEntity, llamaEngine: LlamaEngine): Result<String> {
         if (!llamaEngine.isLoaded) {
             return Result.failure(IllegalStateException("No model loaded — load one in the Chat workspace first"))
+        }
+        if (note.content.isBlank()) {
+            return Result.failure(IllegalStateException("This note is empty — nothing to summarise"))
         }
         val turns = listOf(
             ChatTurn("system", "Summarise the following note in 2-4 sentences. Be concise and factual."),
@@ -69,7 +66,8 @@ class NotesRepository(
         }
         if (failure != null) return Result.failure(IllegalStateException(failure))
         val summary = sb.toString().trim()
-        noteDao.update(note.copy(aiSummary = summary))
+        if (summary.isEmpty()) return Result.failure(IllegalStateException("The model returned an empty summary"))
+        noteDao.updateSummary(note.id, summary)
         return Result.success(summary)
     }
 }

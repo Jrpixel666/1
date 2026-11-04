@@ -1,5 +1,7 @@
 package com.llamaaistudio.app.data.db
 
+import androidx.room.ColumnInfo
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -13,6 +15,15 @@ data class ChatSessionEntity(
     val modelFilePath: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Pinned sessions sort above everything else in the Sessions list. Added in DB v3. */
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
+)
+
+/** A session plus the at-a-glance stats the Sessions list shows (one query, no N+1). */
+data class ChatSessionSummary(
+    @Embedded val session: ChatSessionEntity,
+    val messageCount: Int,
+    val lastMessage: String?,
 )
 
 @Entity(

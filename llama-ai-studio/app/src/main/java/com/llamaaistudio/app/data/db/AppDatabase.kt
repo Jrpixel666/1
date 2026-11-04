@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -16,7 +18,7 @@ import androidx.room.RoomDatabase
         GeneratedImageEntity::class,
         DevProjectEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -31,9 +33,17 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "llama_ai_studio.db")
-                // Pre-release app, no installed base to preserve yet; revisit with a real
-                // migration once this ships.
-                .fallbackToDestructiveMigration()
+                // Real migration for the sessions upgrade so existing chats/notes survive it.
+                .addMigrations(MIGRATION_2_3)
+                // Anything older than v2 predates any public build; still wipe rather than crash.
+                .fallbackToDestructiveMigrationFrom(1)
                 .build()
+
+        /** v3: chat sessions gain a `pinned` flag (Sessions workspace). */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            }
+        }
     }
 }
