@@ -105,7 +105,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             // RUN_COMMAND_WORKDIR is handed to the process as-is — "~" is not expanded, so it
             // must be absolute. ~/storage/downloads is what `termux-setup-storage` creates.
             val termuxPath =
-                "/data/data/com.termux/files/home/storage/downloads/LlamaAiStudioProjects/${project.name}"
+                "${TermuxBridge.TERMUX_HOME}/storage/downloads/LlamaAiStudioProjects/${project.name}"
             val ok = TermuxBridge.runCommand(
                 app,
                 // Scaffolded projects ship no Gradle wrapper; fall back to Termux's `gradle`.
@@ -118,11 +118,15 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                     "Sent to Termux. Run `termux-setup-storage` once if you haven't, then check " +
                         "~/storage/downloads/LlamaAiStudioProjects/${project.name}/build_output.log for progress."
                 } else {
-                    "Could not reach Termux. Install it and enable allow-external-apps in " +
-                        "~/.termux/termux.properties, then try again."
+                    "Could not reach Termux. Grant this app the Termux \"Run commands\" permission, " +
+                        "and enable allow-external-apps in ~/.termux/termux.properties, then try again."
                 },
             )
         }
+    }
+
+    fun setStatus(message: String) {
+        _uiState.value = _uiState.value.copy(status = message)
     }
 
     fun clearStatus() {

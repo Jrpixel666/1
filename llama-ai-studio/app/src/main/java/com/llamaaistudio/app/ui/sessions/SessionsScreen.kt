@@ -24,7 +24,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
@@ -53,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,7 @@ import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.ChatSessionSummary
 import com.llamaaistudio.app.ui.chat.ConfirmDialog
 import com.llamaaistudio.app.ui.chat.TextInputDialog
+import com.llamaaistudio.app.ui.chat.shareText
 import com.llamaaistudio.app.ui.theme.StudioOrange
 import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioTextMuted
@@ -76,7 +79,7 @@ private sealed interface SessionDialog {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit) {
+fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit, onBack: () -> Unit = onOpenChat) {
     val viewModel: SessionsViewModel = viewModel(factory = SessionsViewModel.Factory(app))
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
@@ -85,6 +88,7 @@ fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit) {
 
     var dialog by remember { mutableStateOf<SessionDialog?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(message) {
         message?.let {
@@ -96,6 +100,11 @@ fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to chat")
+                    }
+                },
                 title = {
                     Column {
                         Text("Sessions", style = MaterialTheme.typography.titleMedium)
@@ -160,7 +169,7 @@ fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit) {
                                 onTogglePin = { viewModel.togglePinned(summary) },
                                 onAction = { dialog = it },
                                 onDuplicate = { viewModel.duplicate(summary.session.id) },
-                                onExport = { viewModel.exportToNote(summary.session.id) },
+                                onExport = { viewModel.export(summary.session.id) { t, md -> shareText(context, t, md) } },
                             )
                         }
                     }
@@ -174,7 +183,7 @@ fun SessionsScreen(app: LlamaAiStudioApp, onOpenChat: () -> Unit) {
                                 onTogglePin = { viewModel.togglePinned(summary) },
                                 onAction = { dialog = it },
                                 onDuplicate = { viewModel.duplicate(summary.session.id) },
-                                onExport = { viewModel.exportToNote(summary.session.id) },
+                                onExport = { viewModel.export(summary.session.id) { t, md -> shareText(context, t, md) } },
                             )
                         }
                     }
@@ -353,8 +362,8 @@ private fun SessionCard(
                         onClick = { menuOpen = false; onDuplicate() },
                     )
                     DropdownMenuItem(
-                        text = { Text("Export to note") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null) },
+                        text = { Text("Share transcript") },
+                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                         onClick = { menuOpen = false; onExport() },
                     )
                     DropdownMenuItem(

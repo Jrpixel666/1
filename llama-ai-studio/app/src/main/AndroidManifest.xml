@@ -10,6 +10,11 @@
          and has enabled "allow-external-apps" in its own settings. -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
+    <!-- Android 11+ package visibility: without this, Termux always looks "not installed". -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <!-- Vulkan is used when the device reports support; the app also runs CPU-only. -->
     <uses-feature
         android:name="android.hardware.vulkan.level"
@@ -26,6 +31,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:largeHeap="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.LlamaAiStudio"
         tools:targetApi="35">
 

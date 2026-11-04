@@ -2,7 +2,7 @@
 
 A native Android app (Kotlin + Jetpack Compose + NDK/C++) built for the Google Pixel 9 /
 Tensor G4, combining fully local LLM inference (llama.cpp), a Hugging Face model browser,
-a notes workspace, and a lightweight Android dev workspace.
+a Web Studio that builds and serves websites from an idea, and a lightweight Android dev workspace.
 
 ## Workspaces
 
@@ -10,16 +10,19 @@ a notes workspace, and a lightweight Android dev workspace.
   (`third_party/llama.cpp`, see `VENDORED_COMMIT.txt`). Streaming generation, adjustable
   temperature/top-k/top-p/min-p/repeat-penalty/context length/max tokens, live tok/s, and
   persistent sessions (Room). The ⋮ menu renames the session, edits its system prompt,
-  exports it to Notes, clears or deletes it. Stopping a reply keeps what was generated so far.
-- **Sessions** — every chat session in one place: search across titles *and* message text,
-  pin favourites to the top, rename, per-session system prompt, duplicate (fork a
-  conversation), export as a Markdown transcript into Notes, clear and delete. Each entry
+  shares it as a Markdown transcript, clears or deletes it. Stopping a reply keeps what was
+  generated so far; any reply can be copied.
+- **Sessions** (Chat's ☰ button) — every chat session in one place: search across titles
+  *and* message text, pin favourites to the top, rename, per-session system prompt,
+  duplicate (fork a conversation), share as a Markdown transcript, clear and delete. Each entry
   shows message count, last message, last activity and the model it last ran on. New
   sessions are auto-titled from their first message. Chat and Sessions share one "active
   session", so opening one from either side keeps the other in sync.
-- **Notes** — Markdown notes with folders, search, autosave, AI summaries (runs on the
-  loaded local model), and two-way handoff with Chat (send a note into chat context, save a
-  chat reply as a note). Side-by-side layout on wide screens (`BoxWithConstraints`).
+- **Web** (Web Studio) — describe a website and the loaded model builds it: HTML, CSS and
+  JavaScript, several files per generation (`=== FILE: path ===` blocks, path-checked so
+  output can't escape the project). Static-site and Node.js (zero-dependency `server.js` +
+  `public/`) templates, a file list and code editor, an offline **Quick preview** and a
+  **Start server** button that runs the site in Termux — see **Web Studio and Termux** below.
 - **Image** — fully local text-to-image generation on a vendored, pinned build of
   stable-diffusion.cpp (`third_party/stable-diffusion.cpp`, own module: `:imagegen`).
   Prompt/negative-prompt/steps/CFG/size controls, live per-step progress and cancel, a
@@ -103,10 +106,33 @@ silently assuming Google's x86-64 binaries would run on the device. Plain JVM
 labelled experimental in the UI because AGP's own `aapt2` dependency still expects the x86
 artifact unless substituted.
 
+## Web Studio and Termux
+
+**Start server** exports the project to `Download/LlamaAiStudioWeb/<name>/`, then sends
+Termux a script (`TermuxWebServer.kt`) that:
+
+1. copies the files into Termux's home (`~/llama-web/<name>` — npm can't create symlinks on
+   shared storage),
+2. installs what's missing, first run only: `pkg install python` (static) or `pkg install
+   nodejs` (+ `npm install` if `package.json` declares dependencies),
+3. (re)starts the server on `127.0.0.1:8080` in a visible Termux session (Ctrl+C there, or
+   **Stop** in the app, shuts it down).
+
+The app checks the port every few seconds, opens the live preview as soon as the server
+answers, and pushes new builds and saves to the running server automatically (Node restarts
+when `server.js` changes). Cleartext HTTP is allowed only to `127.0.0.1`/`localhost`
+(`res/xml/network_security_config.xml`).
+
+One-time Termux setup (install Termux from F-Droid — the Play Store build is outdated): grant
+the **Run commands in Termux** permission when the app asks, then paste the command from
+**Copy setup command** into Termux. It sets `allow-external-apps=true` and runs
+`termux-setup-storage`.
+
 ## Database migrations
 
-Room schema v3 adds `chat_sessions.pinned` through a real migration (`MIGRATION_2_3` in
-`AppDatabase`), so upgrading from a v2 build keeps all chats and notes.
+- v3 (`MIGRATION_2_3`): `chat_sessions.pinned` for Sessions.
+- v4 (`MIGRATION_3_4`): the Notes workspace was removed — drops `notes`/`folders` and adds
+  `web_projects`. Chats, models, images and Dev Studio projects are kept.
 
 ## Building this APK yourself
 

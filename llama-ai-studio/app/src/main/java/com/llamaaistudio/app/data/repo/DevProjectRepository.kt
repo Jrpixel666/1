@@ -1,11 +1,9 @@
 package com.llamaaistudio.app.data.repo
 
-import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
-import android.provider.MediaStore
 import com.llamaaistudio.app.data.db.DevProjectDao
 import com.llamaaistudio.app.data.db.DevProjectEntity
+import com.llamaaistudio.app.util.DownloadsExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -56,38 +54,7 @@ class DevProjectRepository(
      * MediaStore.Downloads instead, which needs no runtime permission for app-contributed files.
      */
     suspend fun exportToDownloads(project: DevProjectEntity): String = withContext(Dispatchers.IO) {
-        val root = File(project.rootPath)
-        val relativeBase = "Download/LlamaAiStudioProjects/${project.name}/"
-        for (file in listFiles(root)) {
-            val relPath = file.relativeTo(root).path
-            val dirPart = relPath.substringBeforeLast('/', "")
-            val targetRelativePath = if (dirPart.isEmpty()) relativeBase else "$relativeBase$dirPart/"
-
-            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI // minSdk 31
-            // Re-exporting used to insert a fresh row every time; MediaStore then renamed the
-            // new copy ("MainActivity (1).kt") and Termux kept building the stale original.
-            // Overwrite our own earlier export of the same path instead.
-            val existing = context.contentResolver.query(
-                collection,
-                arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
-                arrayOf(targetRelativePath, file.name),
-                null,
-            )?.use { c -> if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null }
-
-            val uri = existing ?: context.contentResolver.insert(
-                collection,
-                ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, targetRelativePath)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-                },
-            ) ?: continue
-            context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                file.inputStream().use { it.copyTo(out) }
-            }
-        }
-        "Download/LlamaAiStudioProjects/${project.name}"
+        DownloadsExporter.exportTree(context, File(project.rootPath), "LlamaAiStudioProjects/${project.name}")
     }
 
     private fun scaffold(root: File, name: String, template: String) {

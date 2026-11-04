@@ -1,6 +1,10 @@
 package com.llamaaistudio.app.ui.chat
 
 import androidx.compose.foundation.clickable
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ClearAll
@@ -57,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,7 +74,6 @@ import com.llamaaistudio.app.ui.theme.StudioOrange
 import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioPanelSecondary
 import com.llamaaistudio.app.ui.theme.StudioTextMuted
-import com.llamaaistudio.app.util.WorkspaceBridge
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,10 +91,7 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
     var confirmDelete by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
-
-    LaunchedEffect(Unit) {
-        WorkspaceBridge.consumePendingChatContext()?.let { inputText = it }
-    }
+    val context = LocalContext.current
 
     LaunchedEffect(uiState.info) {
         uiState.info?.let {
@@ -145,9 +146,12 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
                                 onClick = { showMenu = false; showSystemPrompt = true },
                             )
                             DropdownMenuItem(
-                                text = { Text("Export to note") },
-                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null) },
-                                onClick = { showMenu = false; viewModel.exportCurrentSessionToNote() },
+                                text = { Text("Share transcript") },
+                                leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    viewModel.exportCurrentSession { title, markdown -> shareText(context, title, markdown) }
+                                },
                             )
                             DropdownMenuItem(
                                 text = { Text("All sessions") },
@@ -215,7 +219,10 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
                     streamingText = uiState.streamingText,
                     isGenerating = streamingHere,
                     modifier = Modifier.weight(1f),
-                    onSaveAsNote = viewModel::saveMessageAsNote,
+                    onCopy = { text ->
+                        copyText(context, text)
+                        viewModel.showInfo("Copied to clipboard")
+                    },
                 )
             }
         }
@@ -336,7 +343,7 @@ private fun MessageList(
     streamingText: String,
     isGenerating: Boolean,
     modifier: Modifier = Modifier,
-    onSaveAsNote: (String) -> Unit,
+    onCopy: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val itemCount = messages.size + if (isGenerating) 1 else 0
@@ -349,7 +356,7 @@ private fun MessageList(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(messages, key = { it.id }) { msg -> MessageBubble(msg, onSaveAsNote) }
+        items(messages, key = { it.id }) { msg -> MessageBubble(msg, onCopy) }
         if (isGenerating) {
             item(key = "streaming") {
                 StreamingBubble(streamingText)
@@ -359,7 +366,7 @@ private fun MessageList(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessageEntity, onSaveAsNote: (String) -> Unit) {
+private fun MessageBubble(message: ChatMessageEntity, onCopy: (String) -> Unit) {
     val isUser = message.role == "user"
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -383,8 +390,8 @@ private fun MessageBubble(message: ChatMessageEntity, onSaveAsNote: (String) -> 
                             color = StudioTextMuted,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { onSaveAsNote(message.content) }) {
-                            Text("Save as note", style = MaterialTheme.typography.labelSmall)
+                        TextButton(onClick = { onCopy(message.content) }) {
+                            Text("Copy", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -398,8 +405,8 @@ private fun MessageBubble(message: ChatMessageEntity, onSaveAsNote: (String) -> 
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { onSaveAsNote(message.content) }) {
-                            Text("Save as note", style = MaterialTheme.typography.labelSmall)
+                        TextButton(onClick = { onCopy(message.content) }) {
+                            Text("Copy", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -523,7 +530,7 @@ private fun EmptySessionHint(systemPrompt: String, modifier: Modifier = Modifier
         Spacer(Modifier.height(6.dp))
         Text(
             "The session is titled from your first message. Rename it, change its system " +
-                "prompt or export it from the ⋮ menu.",
+                "prompt or share it from the ⋮ menu.",
             style = MaterialTheme.typography.bodySmall,
             color = StudioTextMuted,
         )
@@ -587,4 +594,18 @@ fun ConfirmDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+fun shareText(context: Context, subject: String, text: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, subject)
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(send, "Share \"$subject\""))
+}
+
+fun copyText(context: Context, text: String) {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    cm.setPrimaryClip(ClipData.newPlainText("Chat message", text))
 }

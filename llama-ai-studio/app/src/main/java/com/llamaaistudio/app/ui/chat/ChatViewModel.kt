@@ -11,7 +11,6 @@ import com.llamaaistudio.app.data.db.LocalModelEntity
 import com.llamaaistudio.app.data.repo.ChatRepository
 import com.llamaaistudio.app.data.repo.DEFAULT_SYSTEM_PROMPT
 import com.llamaaistudio.app.data.repo.ModelRepository
-import com.llamaaistudio.app.data.repo.NotesRepository
 import com.llamaaistudio.app.engine.EngineState
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
@@ -45,7 +44,6 @@ data class ChatUiState(
 class ChatViewModel(
     private val chatRepository: ChatRepository,
     private val modelRepository: ModelRepository,
-    private val notesRepository: NotesRepository,
     private val llamaEngine: LlamaEngine,
     private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
@@ -149,20 +147,17 @@ class ChatViewModel(
         viewModelScope.launch { chatRepository.clearMessages(id) }
     }
 
-    fun exportCurrentSessionToNote() {
+    /** Renders the open session as a Markdown transcript and hands it to [onReady] (share sheet). */
+    fun exportCurrentSession(onReady: (title: String, markdown: String) -> Unit) {
         val id = _uiState.value.currentSessionId ?: return
         viewModelScope.launch {
             val (title, markdown) = chatRepository.exportAsMarkdown(id) ?: return@launch
-            notesRepository.saveChatMessageAsNote(markdown, title = title)
-            _uiState.update { it.copy(info = "Saved \"$title\" to Notes") }
+            onReady(title, markdown)
         }
     }
 
-    fun saveMessageAsNote(content: String) {
-        viewModelScope.launch {
-            notesRepository.saveChatMessageAsNote(content)
-            _uiState.update { it.copy(info = "Saved to Notes") }
-        }
+    fun showInfo(message: String) {
+        _uiState.update { it.copy(info = message) }
     }
 
     fun updateGenerationParams(update: (GenerationParams) -> GenerationParams) {
@@ -254,7 +249,6 @@ class ChatViewModel(
             ChatViewModel(
                 app.chatRepository,
                 app.modelRepository,
-                app.notesRepository,
                 app.llamaEngine,
                 app.settingsRepository,
             ) as T

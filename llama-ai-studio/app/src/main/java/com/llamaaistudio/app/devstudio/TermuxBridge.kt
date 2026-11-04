@@ -3,6 +3,7 @@ package com.llamaaistudio.app.devstudio
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 
 /**
  * Talks to Termux's RUN_COMMAND plugin API to get ARM64-native build tooling onto the device.
@@ -17,9 +18,22 @@ import android.content.pm.PackageManager
  * JVM (Kotlin/Java) compiles are the dependable case, APK assembly is experimental.
  */
 object TermuxBridge {
+    const val TERMUX_HOME = "/data/data/com.termux/files/home"
+
     private const val TERMUX_PACKAGE = "com.termux"
     private const val RUN_COMMAND_ACTION = "com.termux.RUN_COMMAND"
     private const val RUN_COMMAND_SERVICE = "com.termux.app.RunCommandService"
+
+    /** Runtime ("dangerous") permission Termux declares for RUN_COMMAND; must be requested. */
+    const val RUN_COMMAND_PERMISSION = "com.termux.permission.RUN_COMMAND"
+
+    /** Paste into Termux once: lets other apps (this one) send it commands. */
+    const val ALLOW_EXTERNAL_APPS_COMMAND =
+        "mkdir -p ~/.termux && grep -qx 'allow-external-apps=true' ~/.termux/termux.properties 2>/dev/null " +
+            "|| echo 'allow-external-apps=true' >> ~/.termux/termux.properties; termux-reload-settings; termux-setup-storage"
+
+    fun hasRunCommandPermission(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, RUN_COMMAND_PERMISSION) == PackageManager.PERMISSION_GRANTED
 
     data class ToolchainComponent(
         val name: String,
@@ -58,13 +72,19 @@ object TermuxBridge {
             .let { pkgs -> "pkg install -y $pkgs" }
 
     /**
-     * Fires Termux's RUN_COMMAND intent to run [shellCommand] in [workingDir] (must already be
+     * Fires Termux's RUN_COMMAND intent to run [shellCommand] in [workingDir] (absolute path —
+     * Termux does not expand `~` here; must already be
      * reachable from Termux — e.g. under its own storage symlinks after `termux-setup-storage`).
      * Requires the user to have enabled "allow-external-apps=true" in Termux's own properties and
      * granted this app the com.termux.permission.RUN_COMMAND permission; returns false otherwise.
      */
-    fun runCommand(context: Context, shellCommand: String, workingDir: String): Boolean {
-        if (!isTermuxInstalled(context)) return false
+    fun runCommand(
+        context: Context,
+        shellCommand: String,
+        workingDir: String,
+        background: Boolean = false,
+    ): Boolean {
+        if (!isTermuxInstalled(context) || !hasRunCommandPermission(context)) return false
         return try {
             val intent = Intent().apply {
                 setClassName(TERMUX_PACKAGE, RUN_COMMAND_SERVICE)
@@ -72,7 +92,7 @@ object TermuxBridge {
                 putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
                 putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-c", shellCommand))
                 putExtra("com.termux.RUN_COMMAND_WORKDIR", workingDir)
-                putExtra("com.termux.RUN_COMMAND_BACKGROUND", false)
+                putExtra("com.termux.RUN_COMMAND_BACKGROUND", background)
             }
             context.startForegroundService(intent)
             true

@@ -18,8 +18,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Backs the Sessions workspace: browse, search (titles and message text), pin, rename,
- * duplicate, export, clear and delete chat sessions. Which session is "open" lives in
+ * Backs the Sessions screen: browse, search (titles and message text), pin, rename,
+ * duplicate, share, clear and delete chat sessions. Which session is "open" lives in
  * [com.llamaaistudio.app.data.repo.ChatRepository.activeSessionId], shared with Chat.
  */
 @OptIn(FlowPreview::class)
@@ -79,11 +79,10 @@ class SessionsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         }
     }
 
-    fun exportToNote(sessionId: Long) {
+    fun export(sessionId: Long, onReady: (title: String, markdown: String) -> Unit) {
         viewModelScope.launch {
             val (title, markdown) = chatRepository.exportAsMarkdown(sessionId) ?: return@launch
-            app.notesRepository.saveChatMessageAsNote(markdown, title = title)
-            _message.value = "Saved \"$title\" to Notes"
+            onReady(title, markdown)
         }
     }
 

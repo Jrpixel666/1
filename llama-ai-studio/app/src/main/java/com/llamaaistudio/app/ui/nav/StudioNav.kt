@@ -2,17 +2,15 @@ package com.llamaaistudio.app.ui.nav
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.automirrored.outlined.Chat
-import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
@@ -33,9 +31,12 @@ import com.llamaaistudio.app.ui.chat.ChatScreen
 import com.llamaaistudio.app.ui.devstudio.DevStudioScreen
 import com.llamaaistudio.app.ui.huggingface.ModelsScreen
 import com.llamaaistudio.app.ui.image.ImageGenScreen
-import com.llamaaistudio.app.ui.notes.NotesScreen
 import com.llamaaistudio.app.ui.perf.PerformanceScreen
 import com.llamaaistudio.app.ui.sessions.SessionsScreen
+import com.llamaaistudio.app.ui.webstudio.WebStudioScreen
+
+/** Sessions is reached from Chat's ☰ button, not the bottom bar. */
+const val SESSIONS_ROUTE = "sessions"
 
 enum class StudioDestination(
     val route: String,
@@ -44,8 +45,7 @@ enum class StudioDestination(
     val unselectedIcon: ImageVector,
 ) {
     Chat("chat", "Chat", Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat),
-    Sessions("sessions", "Sessions", Icons.Filled.Forum, Icons.Outlined.Forum),
-    Notes("notes", "Notes", Icons.AutoMirrored.Filled.Notes, Icons.AutoMirrored.Outlined.Notes),
+    Web("web", "Web", Icons.Filled.Language, Icons.Outlined.Language),
     Image("image", "Image", Icons.Filled.Image, Icons.Outlined.Image),
     Models("models", "Models", Icons.Filled.Download, Icons.Outlined.Download),
     Dev("dev", "Dev", Icons.Filled.Code, Icons.Outlined.Code),
@@ -59,7 +59,8 @@ fun StudioBottomBar(navController: NavHostController) {
 
     NavigationBar {
         StudioDestination.entries.forEach { dest ->
-            val selected = currentRoute == dest.route
+            val selected = currentRoute == dest.route ||
+                (dest == StudioDestination.Chat && currentRoute == SESSIONS_ROUTE)
             NavigationBarItem(
                 selected = selected,
                 onClick = { navController.navigateToTab(dest) },
@@ -79,13 +80,19 @@ fun StudioBottomBar(navController: NavHostController) {
 fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
     NavHost(navController = navController, startDestination = StudioDestination.Chat.route) {
         composable(StudioDestination.Chat.route) {
-            ChatScreen(app = app, onOpenSessions = { navController.navigateToTab(StudioDestination.Sessions) })
+            ChatScreen(app = app, onOpenSessions = {
+                navController.navigate(SESSIONS_ROUTE) { launchSingleTop = true }
+            })
         }
-        composable(StudioDestination.Sessions.route) {
-            SessionsScreen(app = app, onOpenChat = { navController.navigateToTab(StudioDestination.Chat) })
+        composable(SESSIONS_ROUTE) {
+            SessionsScreen(
+                app = app,
+                onOpenChat = { navController.navigateToTab(StudioDestination.Chat) },
+                onBack = { navController.popBackStack() },
+            )
         }
-        composable(StudioDestination.Notes.route) {
-            NotesScreen(app = app)
+        composable(StudioDestination.Web.route) {
+            WebStudioScreen(app = app)
         }
         composable(StudioDestination.Image.route) {
             ImageGenScreen(app = app)

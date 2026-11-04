@@ -51,36 +51,6 @@ data class ChatMessageEntity(
     val stopReason: String? = null,
 )
 
-@Entity(tableName = "folders")
-data class FolderEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val name: String,
-    val parentFolderId: Long? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-)
-
-@Entity(
-    tableName = "notes",
-    foreignKeys = [
-        ForeignKey(
-            entity = FolderEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["folderId"],
-            onDelete = ForeignKey.SET_NULL,
-        )
-    ],
-    indices = [Index("folderId")],
-)
-data class NoteEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val folderId: Long? = null,
-    val title: String,
-    val content: String = "",
-    val aiSummary: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
-)
-
 @Entity(tableName = "local_models")
 data class LocalModelEntity(
     @PrimaryKey val filePath: String,
@@ -132,6 +102,17 @@ data class DevProjectEntity(
     val name: String,
     val rootPath: String,
     val template: String, // "empty-compose" | "empty-views" | "library"
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastOpenedAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "web_projects")
+data class WebProjectEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val rootPath: String,
+    val template: String, // "static" | "node"
+    val port: Int = 8080,
     val createdAt: Long = System.currentTimeMillis(),
     val lastOpenedAt: Long = System.currentTimeMillis(),
 )

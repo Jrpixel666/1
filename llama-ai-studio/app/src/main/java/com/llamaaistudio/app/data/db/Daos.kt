@@ -91,63 +91,6 @@ interface ChatDao {
 }
 
 @Dao
-interface NoteDao {
-    @Query("SELECT * FROM notes ORDER BY updatedAt DESC")
-    fun observeAll(): Flow<List<NoteEntity>>
-
-    // `folderId = NULL` is never true in SQL; `IS` matches NULL too, so the "unfiled" case works.
-    @Query("SELECT * FROM notes WHERE folderId IS :folderId ORDER BY updatedAt DESC")
-    fun observeByFolder(folderId: Long?): Flow<List<NoteEntity>>
-
-    @Query(
-        "SELECT * FROM notes WHERE title LIKE '%' || :query || '%' OR content LIKE '%' || :query || '%' " +
-            "ORDER BY updatedAt DESC"
-    )
-    fun search(query: String): Flow<List<NoteEntity>>
-
-    @Query("SELECT * FROM notes WHERE id = :id")
-    suspend fun getNote(id: Long): NoteEntity?
-
-    @Query("SELECT * FROM notes WHERE id = :id")
-    fun observeNote(id: Long): Flow<NoteEntity?>
-
-    @Insert
-    suspend fun insert(note: NoteEntity): Long
-
-    @Update
-    suspend fun update(note: NoteEntity)
-
-    // Targeted column updates: writing back a whole (possibly stale) NoteEntity snapshot let
-    // a finishing AI summary overwrite edits typed while it ran, and vice versa.
-    @Query("UPDATE notes SET title = :title, content = :content, updatedAt = :timestamp WHERE id = :id")
-    suspend fun updateContent(id: Long, title: String, content: String, timestamp: Long)
-
-    @Query("UPDATE notes SET aiSummary = :summary WHERE id = :id")
-    suspend fun updateSummary(id: Long, summary: String?)
-
-    @Query("UPDATE notes SET folderId = :folderId, updatedAt = :timestamp WHERE id = :id")
-    suspend fun updateFolder(id: Long, folderId: Long?, timestamp: Long)
-
-    @Delete
-    suspend fun delete(note: NoteEntity)
-}
-
-@Dao
-interface FolderDao {
-    @Query("SELECT * FROM folders ORDER BY name ASC")
-    fun observeAll(): Flow<List<FolderEntity>>
-
-    @Insert
-    suspend fun insert(folder: FolderEntity): Long
-
-    @Update
-    suspend fun update(folder: FolderEntity)
-
-    @Delete
-    suspend fun delete(folder: FolderEntity)
-}
-
-@Dao
 interface LocalModelDao {
     @Query("SELECT * FROM local_models ORDER BY lastUsedAt DESC, downloadedAt DESC")
     fun observeAll(): Flow<List<LocalModelEntity>>
@@ -214,4 +157,22 @@ interface DevProjectDao {
 
     @Delete
     suspend fun delete(project: DevProjectEntity)
+}
+
+@Dao
+interface WebProjectDao {
+    @Query("SELECT * FROM web_projects ORDER BY lastOpenedAt DESC")
+    fun observeAll(): Flow<List<WebProjectEntity>>
+
+    @Query("SELECT COUNT(*) FROM web_projects WHERE name = :name")
+    suspend fun countByName(name: String): Int
+
+    @Insert
+    suspend fun insert(project: WebProjectEntity): Long
+
+    @Update
+    suspend fun update(project: WebProjectEntity)
+
+    @Delete
+    suspend fun delete(project: WebProjectEntity)
 }

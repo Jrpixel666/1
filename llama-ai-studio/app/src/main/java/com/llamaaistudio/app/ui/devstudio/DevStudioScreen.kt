@@ -45,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.DevProjectEntity
 import com.llamaaistudio.app.devstudio.TermuxBridge
+import com.llamaaistudio.app.devstudio.rememberTermuxActionRunner
 import com.llamaaistudio.app.ui.theme.StudioOrange
 import com.llamaaistudio.app.ui.theme.StudioPanel
 import com.llamaaistudio.app.ui.theme.StudioSuccess
@@ -261,6 +262,9 @@ private fun AiBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudioUiSta
 @Composable
 private fun ToolchainCard(app: LlamaAiStudioApp, viewModel: DevStudioViewModel) {
     var showToolchainDetails by remember { mutableStateOf(false) }
+    val runTermux = rememberTermuxActionRunner(
+        onDenied = { viewModel.setStatus("Termux permission denied — builds can't be sent to Termux without it.") },
+    )
 
     Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -290,7 +294,7 @@ private fun ToolchainCard(app: LlamaAiStudioApp, viewModel: DevStudioViewModel) 
                         app.startActivity(TermuxBridge.installTermuxIntent())
                     }) { Text("Install Termux") }
                 } else {
-                    Button(onClick = { viewModel.buildViaTermux() }) { Text("Build via Termux") }
+                    Button(onClick = { runTermux { viewModel.buildViaTermux() } }) { Text("Build via Termux") }
                 }
                 TextButton(onClick = { viewModel.exportToDownloads() }) { Text("Export to Downloads") }
             }

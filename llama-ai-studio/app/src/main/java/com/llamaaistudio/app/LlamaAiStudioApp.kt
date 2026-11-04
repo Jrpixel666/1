@@ -10,7 +10,7 @@ import com.llamaaistudio.app.data.repo.DevProjectRepository
 import com.llamaaistudio.app.data.repo.ImageGalleryRepository
 import com.llamaaistudio.app.data.repo.ImageModelRepository
 import com.llamaaistudio.app.data.repo.ModelRepository
-import com.llamaaistudio.app.data.repo.NotesRepository
+import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
 import com.llamaaistudio.imagegen.ImageGenEngine
@@ -48,7 +48,7 @@ class LlamaAiStudioApp : Application() {
     lateinit var chatRepository: ChatRepository
         private set
 
-    lateinit var notesRepository: NotesRepository
+    lateinit var webProjectRepository: WebProjectRepository
         private set
 
     lateinit var modelRepository: ModelRepository
@@ -86,7 +86,6 @@ class LlamaAiStudioApp : Application() {
         database = AppDatabase.build(this)
         llamaEngine = LlamaEngine()
         chatRepository = ChatRepository(database.chatDao(), llamaEngine)
-        notesRepository = NotesRepository(database.noteDao(), database.folderDao())
         modelRepository = ModelRepository(this, database.modelDao())
         httpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
@@ -107,6 +106,7 @@ class LlamaAiStudioApp : Application() {
         }, httpClient)
         settingsRepository = SettingsRepository(this)
         devProjectRepository = DevProjectRepository(this, database.devProjectDao())
+        webProjectRepository = WebProjectRepository(this, database.webProjectDao())
 
         imageGenEngine = ImageGenEngine()
         imageModelRepository = ImageModelRepository(this, database.imageModelDao())
