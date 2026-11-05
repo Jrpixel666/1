@@ -161,6 +161,74 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     fun stopBuild() = app.buildJob.stop()
 
+    // --- Project Builder ---------------------------------------------------------------------
+
+    val builder: StateFlow<ProjectBuilder.State> get() = app.projectBuilder.state
+
+    private fun pkgOf(project: DevProjectEntity) =
+        com.llamaaistudio.app.data.repo.ProjectTemplates.packageSegment(project.name)
+
+    private fun codeAi(): CodeAi = object : CodeAi {
+        override val label = app.ai.sourceLabel
+        override val largeContext = app.ai.cloudModelName != null
+        override suspend fun complete(system: String, user: String, maxTokens: Int): Result<String> {
+            val sb = StringBuilder()
+            var failure: String? = null
+            app.ai.generate(listOf(ChatTurn("system", system), ChatTurn("user", user)), GenerationParams(maxTokens = maxTokens, temperature = 0.2f))
+                .collect { e ->
+                    when (e) {
+                        is GenerationEvent.Token -> sb.append(e.piece)
+                        is GenerationEvent.Failed -> failure = e.reason
+                        is GenerationEvent.Done -> Unit
+                    }
+                }
+            return failure?.let { Result.failure(Exception(it)) } ?: Result.success(sb.toString())
+        }
+    }
+
+    private fun gradleRunner(project: DevProjectEntity): ProjectBuildRunner = object : ProjectBuildRunner {
+        override suspend fun build(onLog: (String) -> Unit): ProjectBuildRunner.Outcome {
+            repo.ensureBuildFiles(project)
+            val done = kotlinx.coroutines.CompletableDeferred<Int>()
+            app.buildJob.start(
+                label = "Project Builder: ${project.name} (assembleDebug)",
+                command = AndroidBuildToolchain.buildCommand("assembleDebug"),
+                owner = project.id,
+                workdir = repo.guestPath(project),
+                env = AndroidBuildToolchain.buildEnv,
+                onFinished = { done.complete(it) },
+            )
+            val code = try { done.await() } catch (e: kotlinx.coroutines.CancellationException) { app.buildJob.stop(); throw e }
+            if (code == 0) recordBuild(project.id, true)
+            val apk = repo.builtApk(project)
+            return ProjectBuildRunner.Outcome(code == 0, app.buildJob.log.value, apk.takeIf { it.isFile })
+        }
+    }
+
+    private fun builderReady(project: DevProjectEntity): Boolean = when {
+        !repo.isAndroidApp(project) -> { setStatus("Project Builder makes Android apps — create an Android project."); false }
+        !app.ai.isAvailable -> { setStatus("Pick a model first — OpenCode is best for big projects."); false }
+        else -> true
+    }
+
+    fun planProject(idea: String) {
+        val project = _uiState.value.selectedProject ?: return
+        if (!builderReady(project)) return
+        app.projectBuilder.plan(project.id, File(project.rootPath), pkgOf(project), idea, codeAi())
+    }
+
+    fun removePlannedFile(path: String) = app.projectBuilder.removeFromPlan(path)
+
+    fun buildPlannedProject() {
+        val project = _uiState.value.selectedProject ?: return
+        if (!builderReady(project)) return
+        if (!_toolchainReady.value) { setStatus("Install the build tools first."); return }
+        app.projectBuilder.buildAll(File(project.rootPath), pkgOf(project), codeAi(), gradleRunner(project))
+    }
+
+    fun stopProjectBuilder() { app.projectBuilder.stop(); app.buildJob.stop() }
+    fun resetProjectBuilder() = app.projectBuilder.reset()
+
     /**
      * Why the build failed: the compiler's own "e: file:line message" errors first (that's the
      * actual problem), then Gradle's "* What went wrong:" summary, plus out-of-memory hints.

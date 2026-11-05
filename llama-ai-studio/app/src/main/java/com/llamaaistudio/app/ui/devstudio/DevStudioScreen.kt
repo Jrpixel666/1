@@ -1,6 +1,7 @@
 package com.llamaaistudio.app.ui.devstudio
 
 import android.content.ClipData
+import com.llamaaistudio.app.ui.devstudio.ProjectBuilder.Phase as P
 import android.content.ClipboardManager
 import android.content.Context
 
@@ -189,6 +190,8 @@ private fun ProjectDetailScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+            ProjectBuilderCard(viewModel, uiState)
+            Spacer(Modifier.height(12.dp))
             AiBuilderCard(viewModel, uiState)
 
             Spacer(Modifier.height(16.dp))
@@ -492,4 +495,95 @@ private fun BuildEta(startedAt: Long?, log: List<String>, last: Pair<Long, Int>?
 private fun fmtDuration(ms: Long): String {
     val s = ms / 1000
     return if (s >= 60) "${s / 60}m ${s % 60}s" else "${s}s"
+}
+
+@Composable
+private fun ProjectBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudioUiState) {
+    val st by viewModel.builder.collectAsStateWithLifecycle()
+    val project = uiState.selectedProject ?: return
+    val mine = st.projectId == null || st.projectId == project.id
+    var idea by remember { mutableStateOf("") }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(st.running) {
+        while (st.running) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) }
+    }
+    Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Project Builder", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+            Text(
+                "For bigger apps: the AI plans every file (screens, layouts, resources), writes each one, " +
+                    "builds, and fixes build errors automatically (up to 5 rounds). Use it again to add features. " +
+                    "Best with an OpenCode model; on-device works for small and medium apps.",
+                style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+            )
+            if (!mine) {
+                Text("Busy with another project.", color = StudioTextMuted)
+                return@Column
+            }
+            Spacer(Modifier.height(8.dp))
+            if (st.phase == P.IDLE || st.phase == P.FAILED || st.phase == P.DONE || st.phase == P.STOPPED) {
+                OutlinedTextField(
+                    value = idea, onValueChange = { idea = it }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(if (st.phase == P.DONE) "Add a feature, e.g. \"add a settings screen\"" else "Describe the whole app — paste your big prompt") },
+                    minLines = 3,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { viewModel.planProject(idea) }, enabled = idea.isNotBlank()) {
+                        Text(if (st.phase == P.DONE) "Plan feature" else "Plan app")
+                    }
+                    if (st.phase != P.IDLE) OutlinedButton(onClick = { viewModel.resetProjectBuilder() }) { Text("Clear") }
+                }
+            }
+            if (st.phase == P.PLANNED) {
+                Text("Plan — ${st.plan.size} files (remove any you don't want):", style = MaterialTheme.typography.labelMedium)
+                st.plan.forEach { f ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(f.path.removePrefix("app/src/main/"), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                            Text(f.purpose, style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+                        }
+                        TextButton(onClick = { viewModel.removePlannedFile(f.path) }) { Text("✕") }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { viewModel.buildPlannedProject() }) { Text("Write & build") }
+                    OutlinedButton(onClick = { viewModel.resetProjectBuilder() }) { Text("Cancel") }
+                }
+            }
+            if (st.running) {
+                val step = when (st.phase) {
+                    P.PLANNING -> "Planning…"
+                    P.WRITING -> "Writing file ${st.writingIndex + 1} of ${st.plan.size}"
+                    P.BUILDING -> if (st.round == 0) "Building with Gradle" else "Rebuilding — fix round ${st.round}/${st.maxRounds}"
+                    P.FIXING -> "Fixing build errors (round ${st.round + 1}/${st.maxRounds})"
+                    else -> ""
+                }
+                val elapsed = st.startedAt?.let { now - it } ?: 0L
+                // Rough ETA while writing: average time per file so far × files left.
+                val eta = if (st.phase == P.WRITING && st.writingIndex > 0)
+                    elapsed / st.writingIndex * (st.plan.size - st.writingIndex) else null
+                Text(step, color = StudioOrange)
+                Text(
+                    "Elapsed ${fmtDuration(elapsed)}" + (eta?.let { " · ~${fmtDuration(it)} left to write, then build" } ?: ""),
+                    style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+                )
+                androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                OutlinedButton(onClick = { viewModel.stopProjectBuilder() }) { Text("Stop") }
+            }
+            st.message?.let { Spacer(Modifier.height(6.dp)); Text(it, color = if (st.phase == P.DONE) StudioOrange else MaterialTheme.colorScheme.error) }
+            if (st.phase == P.DONE && st.apk != null) {
+                Button(onClick = { viewModel.installApk() }) { Text("Install APK") }
+            }
+            if (st.lastErrors.isNotEmpty() && !st.running) {
+                Text("Last errors:", style = MaterialTheme.typography.labelMedium)
+                st.lastErrors.take(12).forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = StudioTextMuted) }
+            }
+            if (st.activity.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                st.activity.takeLast(6).forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = StudioTextMuted) }
+            }
+        }
+    }
 }

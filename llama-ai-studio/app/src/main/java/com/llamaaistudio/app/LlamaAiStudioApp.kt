@@ -115,6 +115,9 @@ class LlamaAiStudioApp : Application() {
     lateinit var buildJob: LinuxJob
         private set
 
+    /** Dev Studio's Project Builder (plan → write files → build → auto-fix); app-scoped. */
+    val projectBuilder by lazy { com.llamaaistudio.app.ui.devstudio.ProjectBuilder() }
+
     /** Web Studio's built-in server; app-scoped so it keeps running across screens. */
     val webServer = LocalWebServer()
 
