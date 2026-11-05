@@ -585,6 +585,10 @@ private fun ProjectBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudio
                 Text("Last errors:", style = MaterialTheme.typography.labelMedium)
                 st.lastErrors.take(12).forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = StudioTextMuted) }
             }
+            if (st.requests > 0) {
+                Text("${st.requests} AI requests · ~${"%,d".format(st.tokensUsed)} tokens (estimate)",
+                    style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            }
             if (st.activity.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 st.activity.takeLast(6).forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = StudioTextMuted) }
@@ -707,6 +711,23 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
                     Text("Include paid models (billed to your OpenCode account)", style = MaterialTheme.typography.labelSmall)
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            val pace by viewModel.pace.collectAsStateWithLifecycle()
+            Text("Speed", style = MaterialTheme.typography.labelMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ProjectBuilder.Pace.entries.forEach { p ->
+                    FilterChip(selected = pace == p, onClick = { viewModel.setPace(p) },
+                        label = { Text(p.name.lowercase().replaceFirstChar { it.uppercase() }) })
+                }
+            }
+            Text(
+                when (pace) {
+                    ProjectBuilder.Pace.SLOW -> "Saves tokens: less context per request, shorter replies, 8 s pause between requests, up to 3 fix rounds."
+                    ProjectBuilder.Pace.NORMAL -> "Middle ground: more context, 2 s pause, up to 4 fix rounds."
+                    ProjectBuilder.Pace.FAST -> "Full context and long replies, no pause, up to 5 fix rounds — best results, most tokens."
+                },
+                style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+            )
             msg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = StudioTextMuted) }
         }
     }

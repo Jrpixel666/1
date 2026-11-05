@@ -59,6 +59,9 @@ class ProjectBuilder(
         val apk: File? = null,
         val message: String? = null,
         val startedAt: Long? = null,
+        /** Rough token count (prompt + reply) across all requests of this run. */
+        val tokensUsed: Int = 0,
+        val requests: Int = 0,
     ) {
         val running: Boolean get() = phase in setOf(Phase.PLANNING, Phase.WRITING, Phase.BUILDING, Phase.FIXING)
     }
@@ -68,6 +71,41 @@ class ProjectBuilder(
     private var job: Job? = null
 
     var maxFixRounds = 5
+
+    /**
+     * How hard to push the model. SLOW (default) saves tokens: less project context per request,
+     * shorter replies, a pause between requests and fewer fix rounds. FAST sends everything.
+     */
+    enum class Pace(val label: String, val contextScale: Double, val maxOutput: Int, val rounds: Int, val pauseMs: Long) {
+        SLOW("Slow · saves tokens", 0.25, 4000, 3, 8_000),
+        NORMAL("Normal", 0.6, 6000, 4, 2_000),
+        FAST("Fast · uses most tokens", 1.0, 8000, 5, 0),
+    }
+
+    var pace: Pace = Pace.SLOW
+        set(value) { field = value; maxFixRounds = value.rounds }
+
+    init { maxFixRounds = pace.rounds }
+
+    private fun ctx(ai: CodeAi, large: Int, small: Int) =
+        if (ai.largeContext) maxOf(small, (large * pace.contextScale).toInt()) else small
+
+    private fun out(ai: CodeAi, large: Int, small: Int) =
+        if (ai.largeContext) minOf(large, pace.maxOutput) else small
+
+    private var lastRequestAt = 0L
+
+    /** Every model call goes through here: paces requests and counts (estimated) tokens. */
+    private suspend fun ask(ai: CodeAi, system: String, user: String, maxTokens: Int): Result<String> {
+        val wait = lastRequestAt + pace.pauseMs - System.currentTimeMillis()
+        if (wait > 0) kotlinx.coroutines.delay(wait)
+        val reply = ai.complete(system, user, maxTokens)
+        lastRequestAt = System.currentTimeMillis()
+        // ~4 characters per token is a fair estimate for code and English.
+        val used = (system.length + user.length + (reply.getOrNull()?.length ?: 0)) / 4
+        _state.update { it.copy(tokensUsed = it.tokensUsed + used, requests = it.requests + 1) }
+        return reply
+    }
 
     private fun log(line: String) = _state.update { it.copy(activity = (it.activity + line).takeLast(200)) }
 
@@ -88,7 +126,7 @@ class ProjectBuilder(
             _state.value = State(Phase.PLANNING, projectId, idea, startedAt = System.currentTimeMillis())
             log("Planning with ${ai.label}…")
             val existing = sourceFiles(root).map { it.relativeTo(root).path.replace('\\', '/') }
-            val reply = ai.complete(planSystem(pkg), planUser(idea, existing), if (ai.largeContext) 3000 else 1200)
+            val reply = ask(ai, planSystem(pkg), planUser(idea, existing), out(ai, 3000, 1200))
             val plan = reply.getOrNull()?.let { parsePlan(it, pkg) }.orEmpty()
             if (plan.isEmpty()) {
                 _state.update {
@@ -119,8 +157,8 @@ class ProjectBuilder(
                 log("Writing ${f.path} (${i + 1}/${plan.size})…")
                 val target = WebCodeGen.resolveInside(root, f.path)
                 if (target == null) { log("  skipped: path outside the project"); continue }
-                val context = contextFiles(root, exclude = f.path, budget = if (ai.largeContext) 60_000 else 5_000)
-                val reply = ai.complete(fileSystem(pkg), fileUser(_state.value.idea, plan, f, context), if (ai.largeContext) 8000 else 2000)
+                val context = contextFiles(root, exclude = f.path, budget = ctx(ai, 60_000, 5_000))
+                val reply = ask(ai, fileSystem(pkg), fileUser(_state.value.idea, plan, f, context), out(ai, 8000, 2000))
                 val content = reply.getOrNull()?.let { cleanFile(it, f.path) }
                 if (content.isNullOrBlank()) {
                     log("  failed: ${reply.exceptionOrNull()?.message ?: "empty reply"}")
@@ -154,13 +192,13 @@ class ProjectBuilder(
                 val summary = whatWentWrong(outcome.log)
                 if (summary.isEmpty()) { log("Build failed with no readable error — see the build log."); break }
                 log("Fixing a project-level error…")
-                val reply = ai.complete(
+                val reply = ask(ai, 
                     fileSystem(pkg).replace("Output ONLY the complete contents of the requested file — no explanations, no markdown fences.",
                         "Output each file you change as \"=== FILE: relative/path ===\" followed by its complete contents. No explanations."),
                     "The Gradle build failed:\n${summary.joinToString("\n")}\n\nProject files:\n" +
-                        contextFiles(root, exclude = "", budget = if (ai.largeContext) 60_000 else 6_000) +
+                        contextFiles(root, exclude = "", budget = ctx(ai, 60_000, 6_000)) +
                         "\n\nRewrite the files needed to fix it (app/build.gradle.kts may be changed to fix dependencies).",
-                    if (ai.largeContext) 8000 else 2000,
+                    out(ai, 8000, 2000),
                 )
                 val files = reply.getOrNull()?.let { WebCodeGen.parse(it, "app/build.gradle.kts") }.orEmpty()
                     .filter { ALLOWED_PREFIX.containsMatchIn(it.path) }
@@ -176,11 +214,11 @@ class ProjectBuilder(
                 val file = WebCodeGen.resolveInside(root, path) ?: continue
                 if (!file.isFile) continue
                 log("Fixing $path (${errs.size} error${if (errs.size == 1) "" else "s"})…")
-                val context = contextFiles(root, exclude = path, budget = if (ai.largeContext) 40_000 else 3_000)
-                val reply = ai.complete(
+                val context = contextFiles(root, exclude = path, budget = ctx(ai, 40_000, 3_000))
+                val reply = ask(ai, 
                     fileSystem(pkg),
                     fixUser(path, file.readText(), errs, context),
-                    if (ai.largeContext) 8000 else 2000,
+                    out(ai, 8000, 2000),
                 )
                 reply.getOrNull()?.let { cleanFile(it, path) }?.takeIf { it.isNotBlank() }?.let { fixed ->
                     withContext(Dispatchers.IO) { file.writeText(fixed) }

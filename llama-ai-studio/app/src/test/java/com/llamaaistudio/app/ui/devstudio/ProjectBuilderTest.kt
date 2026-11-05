@@ -96,7 +96,7 @@ class ProjectBuilderTest {
     @Test
     fun plansWritesBuildsFixesAndSucceeds() = runBlocking {
         val root = tmp.newFolder("golf")
-        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default))
+        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default)).apply { pace = ProjectBuilder.Pace.FAST }
         val ai = FakeAi()
         val runner = FakeRunner(root)
 
@@ -116,7 +116,7 @@ class ProjectBuilderTest {
     @Test
     fun givesUpAfterMaxRounds() = runBlocking {
         val root = tmp.newFolder("golf")
-        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default)).apply { maxFixRounds = 2 }
+        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default)).apply { pace = ProjectBuilder.Pace.FAST; maxFixRounds = 2 }
         val stubborn = object : CodeAi {
             override val label = "stubborn"
             override val largeContext = false
@@ -156,7 +156,7 @@ class ProjectBuilderTest {
     @Test
     fun fixesProjectLevelFailures() = runBlocking {
         val root = tmp.newFolder("p")
-        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default))
+        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default)).apply { pace = ProjectBuilder.Pace.FAST }
         val build = File(root, "app/build.gradle.kts")
         val ai = object : CodeAi {
             override val label = "f"; override val largeContext = true
@@ -179,5 +179,18 @@ class ProjectBuilderTest {
         assertEquals(ProjectBuilder.Phase.DONE, end.phase)
         assertTrue(ai.sawSummary)
         assertTrue(build.readText().contains("good"))
+    }
+
+    @Test
+    fun slowPaceIsDefaultAndCountsTokens() = runBlocking {
+        val b = ProjectBuilder(CoroutineScope(Dispatchers.Default))
+        assertEquals(ProjectBuilder.Pace.SLOW, b.pace)
+        assertEquals(3, b.maxFixRounds)
+        b.pace = ProjectBuilder.Pace.FAST
+        val root = tmp.newFolder("t")
+        b.plan(1, root, "t", "an app", FakeAi())
+        val st = withTimeout(5000) { b.state.first { it.phase == ProjectBuilder.Phase.PLANNED } }
+        assertEquals(1, st.requests)
+        assertTrue(st.tokensUsed > 50)
     }
 }

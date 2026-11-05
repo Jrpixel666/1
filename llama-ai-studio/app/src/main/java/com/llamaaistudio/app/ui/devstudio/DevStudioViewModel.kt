@@ -177,6 +177,19 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val _modelMsg = MutableStateFlow<String?>(null)
     val modelMessage: StateFlow<String?> = _modelMsg
 
+    private val pacePrefs = app.getSharedPreferences("dev_ai", android.content.Context.MODE_PRIVATE)
+    private val _pace = MutableStateFlow(
+        runCatching { ProjectBuilder.Pace.valueOf(pacePrefs.getString("pace", null) ?: "SLOW") }.getOrDefault(ProjectBuilder.Pace.SLOW)
+    ).also { app.projectBuilder.pace = it.value }
+    /** Speed / token use of the Project Builder (default SLOW). */
+    val pace: StateFlow<ProjectBuilder.Pace> = _pace
+
+    fun setPace(p: ProjectBuilder.Pace) {
+        _pace.value = p
+        app.projectBuilder.pace = p
+        pacePrefs.edit().putString("pace", p.name).apply()
+    }
+
     fun maskedOpenCodeKey(): String? = app.openCode.maskedKey()
 
     fun saveOpenCodeKey(key: String) {
