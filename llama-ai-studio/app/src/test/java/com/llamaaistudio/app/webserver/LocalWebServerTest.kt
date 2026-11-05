@@ -107,11 +107,16 @@ class LocalWebServerTest {
     }
 
     @Test
-    fun stopClosesThePort() {
+    fun stopReleasesThePort() {
         server.stop()
         assertFalse(server.state.value.running)
-        val refused = runCatching { Socket("127.0.0.1", port).close() }.isFailure
-        assertTrue("port should be closed", refused)
+        // Binding the same port again proves the server let go of it. (Probing with a connect
+        // is racy: the OS may hand a just-freed ephemeral port to another process.)
+        java.net.ServerSocket().use { s ->
+            s.reuseAddress = true
+            s.bind(java.net.InetSocketAddress("127.0.0.1", port))
+            assertTrue(s.isBound)
+        }
     }
 
     @Test

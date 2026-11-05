@@ -33,7 +33,7 @@ object LlamaNative {
 
     external fun freeModel(handle: Long)
 
-    /** JSON: {"nParams":.., "sizeBytes":.., "nCtxTrain":.., "desc":"..", "nVocab":..} */
+    /** JSON: {"nParams","sizeBytes","nCtxTrain","desc","nVocab","hasChatTemplate","nLayer","gpuLayers"} */
     external fun getModelInfo(handle: Long): String
 
     external fun tokenCount(handle: Long, text: String): Int
@@ -60,7 +60,14 @@ object LlamaNative {
 
     external fun cancelGeneration(handle: Long)
 
+    /** True when the Vulkan backend found a usable GPU on this device (runtime check). */
     external fun supportsVulkan(): Boolean
+
+    /** JSON array of {"name","description","type":"cpu|gpu|igpu|accel","memoryFree","memoryTotal"}. */
+    external fun listDevices(): String
+
+    /** Changes CPU thread counts on a loaded model without reloading it. */
+    external fun setThreads(handle: Long, nThreads: Int, nThreadsBatch: Int)
 
     external fun nativeThreadCountRecommendation(): Int
 }

@@ -1,0 +1,10 @@
+Khronos headers for building ggml's Vulkan backend with the Android NDK (whose own Vulkan
+headers are C-only, older, and lack vulkan.hpp):
+
+- Vulkan-Headers  tag vulkan-sdk-1.4.363.0  (6802bb4733b63ed5efd3adb308a6c885ef180ea1)
+  https://github.com/KhronosGroup/Vulkan-Headers — Apache-2.0 / MIT (see LICENSE.md, LICENSES/)
+- SPIRV-Headers   tag vulkan-sdk-1.4.363.0  (496543121ce6419f23d6fa5d7194ba66c36212d2)
+  https://github.com/KhronosGroup/SPIRV-Headers — MIT-style (see LICENSE)
+
+Only include/ and the licence files are kept. cmake/SPIRV-HeadersConfig.cmake is ours.
+At runtime the app links the device's own libvulkan.so (NDK stub at build time).

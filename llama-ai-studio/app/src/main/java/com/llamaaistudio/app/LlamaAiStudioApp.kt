@@ -1,6 +1,7 @@
 package com.llamaaistudio.app
 
 import android.app.Application
+import com.llamaaistudio.app.data.datastore.ComputeMode
 import com.llamaaistudio.app.data.datastore.SettingsRepository
 import com.llamaaistudio.app.data.db.AppDatabase
 import com.llamaaistudio.app.data.hf.HfApi
@@ -111,7 +112,7 @@ class LlamaAiStudioApp : Application() {
     override fun onCreate() {
         super.onCreate()
         database = AppDatabase.build(this)
-        llamaEngine = LlamaEngine()
+        llamaEngine = LlamaEngine(gpuCrashMarker = File(filesDir, "gpu_call_in_progress"))
         chatRepository = ChatRepository(database.chatDao(), llamaEngine)
         modelRepository = ModelRepository(this, database.modelDao())
         httpClient = OkHttpClient.Builder()
@@ -208,8 +209,20 @@ class LlamaAiStudioApp : Application() {
      * showed up as soon as almost anything else tried to allocate — a settings change, a
      * Compose recomposition from dragging a slider — not at the load itself.
      */
+    /** Set when the previous run crashed inside a GPU call; Performance tab explains it. */
+    @Volatile
+    var gpuCrashNotice: String? = null
+
     private fun restoreLastUsedModels() {
         applicationScope.launch {
+            llamaEngine.consumeGpuCrashMarker()?.let { phase ->
+                // The GPU driver crashed the app last time — don't walk into it again.
+                settingsRepository.setComputeMode(ComputeMode.CPU_ONLY)
+                gpuCrashNotice = "The app closed unexpectedly while the GPU was " +
+                    (if (phase == "load") "loading the model" else "generating") +
+                    ", so it switched back to CPU only. You can try GPU + CPU again with fewer GPU layers."
+                Log.w("LlamaAiStudioApp", "GPU call crashed last run ($phase); fell back to CPU")
+            }
             val settings = settingsRepository.settings.first()
             modelRepository.getMostRecentlyUsed()?.let { model ->
                 val fits = modelRepository.estimateRamRequirementBytes(model.sizeBytes, settings.contextLength) <
@@ -217,12 +230,7 @@ class LlamaAiStudioApp : Application() {
                 if (fits && File(model.filePath).exists()) {
                     llamaEngine.loadModel(
                         model.filePath,
-                        ModelLoadParams(
-                            contextLength = settings.contextLength,
-                            threads = settings.threads,
-                            threadsBatch = settings.threads,
-                            useMlock = settings.useMlock,
-                        ),
+                        settings.loadParams(),
                     )
                 }
             }

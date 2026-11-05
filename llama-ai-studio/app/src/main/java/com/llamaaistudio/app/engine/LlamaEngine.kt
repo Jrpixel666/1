@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -25,8 +26,9 @@ data class ChatTurn(val role: String, val content: String)
 data class ModelLoadParams(
     val contextLength: Int = 4096,
     val batchSize: Int = 512,
-    val threads: Int = LlamaNative.nativeThreadCountRecommendation(),
+    val threads: Int = CpuTopology.performanceCores,
     val threadsBatch: Int = threads,
+    /** 0 = CPU only, N = N layers on the GPU, < 0 = all layers. */
     val gpuLayers: Int = 0,
     val useMmap: Boolean = true,
     val useMlock: Boolean = false,
@@ -50,7 +52,23 @@ data class ModelInfo(
     val contextLengthTrained: Int,
     val vocabSize: Int,
     val hasChatTemplate: Boolean,
-)
+    val nLayer: Int = 0,
+    /** Layers actually offloaded to the GPU (0 = CPU only). */
+    val gpuLayers: Int = 0,
+) {
+    val onGpu: Boolean get() = gpuLayers > 0
+}
+
+/** A compute device ggml found (the CPU, the Vulkan GPU, …). */
+data class BackendDevice(
+    val name: String,
+    val description: String,
+    val type: String, // cpu | gpu | igpu | accel
+    val memoryFree: Long,
+    val memoryTotal: Long,
+) {
+    val isGpu: Boolean get() = type == "gpu" || type == "igpu"
+}
 
 data class GenerationStats(
     val promptTokens: Int,
@@ -80,6 +98,12 @@ sealed interface EngineState {
  * callers swap models by calling [loadModel] again (it unloads the previous one first).
  */
 class LlamaEngine(
+    /**
+     * Written right before a GPU load/generation and deleted right after. If the process dies
+     * in between (a GPU driver crash in native code), the file survives and the next launch
+     * falls back to CPU instead of crashing again on the automatic model restore.
+     */
+    private val gpuCrashMarker: File? = null,
     private val backgroundDispatcher: CoroutineDispatcher =
         Executors.newSingleThreadExecutor { r -> Thread(r, "llama-inference") }
             .asCoroutineDispatcher(),
@@ -98,12 +122,28 @@ class LlamaEngine(
 
     val isLoaded: Boolean get() = handle != 0L
 
+    /** Params the current model was loaded with (null when nothing is loaded). */
+    @Volatile
+    var currentLoadParams: ModelLoadParams? = null
+        private set
+
+    /** Changes CPU threads on the loaded model immediately, no reload needed. */
+    suspend fun setThreads(threads: Int, threadsBatch: Int) = withContext(backgroundDispatcher) {
+        val h = handle
+        if (h != 0L) {
+            LlamaNative.setThreads(h, threads, threadsBatch)
+            currentLoadParams = currentLoadParams?.copy(threads = threads, threadsBatch = threadsBatch)
+        }
+    }
+
     fun currentModelPath(): String? = (_state.value as? EngineState.Ready)?.modelPath
 
     suspend fun loadModel(path: String, params: ModelLoadParams): Result<ModelInfo> =
         withContext(backgroundDispatcher) {
             unloadInternal()
             _state.value = EngineState.Loading
+            val gpu = params.gpuLayers != 0
+            if (gpu) markGpu("load")
             val newHandle = LlamaNative.loadModel(
                 path,
                 params.contextLength,
@@ -114,12 +154,14 @@ class LlamaEngine(
                 params.useMmap,
                 params.useMlock,
             )
+            if (gpu) clearGpuMark()
             if (newHandle == 0L) {
                 val msg = "Failed to load model (out of memory, unsupported format, or corrupt file)"
                 _state.value = EngineState.Error(msg)
                 return@withContext Result.failure(IllegalStateException(msg))
             }
             handle = newHandle
+            currentLoadParams = params
             val info = parseModelInfo(LlamaNative.getModelInfo(newHandle))
             _state.value = EngineState.Ready(path, info)
             Result.success(info)
@@ -134,6 +176,7 @@ class LlamaEngine(
         if (handle != 0L) {
             LlamaNative.freeModel(handle)
             handle = 0L
+            currentLoadParams = null
         }
     }
 
@@ -179,6 +222,8 @@ class LlamaEngine(
                     return@withContext
                 }
                 val seed = if (params.seed >= 0) params.seed else seedCounter.incrementAndGet()
+                val gpu = (currentLoadParams?.gpuLayers ?: 0) != 0
+                if (gpu) markGpu("generate")
                 val messagesJson = JSONArray().apply {
                     messages.forEach { turn ->
                         put(JSONObject().put("role", turn.role).put("content", turn.content))
@@ -197,6 +242,7 @@ class LlamaEngine(
                     seed,
                     callback,
                 )
+                if (gpu) clearGpuMark()
                 val obj = JSONObject(resultJson)
                 if (obj.has("error")) {
                     trySend(GenerationEvent.Failed(obj.getString("error")))
@@ -227,6 +273,23 @@ class LlamaEngine(
         // made long replies stop dead mid-sentence whenever the UI fell briefly behind.
         .buffer(Channel.UNLIMITED)
 
+    private fun markGpu(phase: String) {
+        runCatching { gpuCrashMarker?.writeText(phase) }
+    }
+
+    private fun clearGpuMark() {
+        runCatching { gpuCrashMarker?.delete() }
+    }
+
+    /** "load"/"generate" if the previous run died during a GPU call (and resets the marker). */
+    fun consumeGpuCrashMarker(): String? {
+        val f = gpuCrashMarker ?: return null
+        if (!f.exists()) return null
+        val phase = runCatching { f.readText() }.getOrDefault("unknown")
+        f.delete()
+        return phase
+    }
+
     fun tokenCount(text: String): Int {
         val h = handle
         return if (h == 0L) 0 else LlamaNative.tokenCount(h, text)
@@ -242,7 +305,24 @@ class LlamaEngine(
                 contextLengthTrained = obj.optInt("nCtxTrain", 0),
                 vocabSize = obj.optInt("nVocab", 0),
                 hasChatTemplate = obj.optBoolean("hasChatTemplate", false),
+                nLayer = obj.optInt("nLayer", 0),
+                gpuLayers = obj.optInt("gpuLayers", 0),
             )
         }
+
+        /** Compute devices ggml registered on this phone (CPU + Vulkan GPU if usable). */
+        fun devices(): List<BackendDevice> = runCatching {
+            val arr = JSONArray(LlamaNative.listDevices())
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                BackendDevice(
+                    name = o.optString("name"),
+                    description = o.optString("description"),
+                    type = o.optString("type"),
+                    memoryFree = o.optLong("memoryFree"),
+                    memoryTotal = o.optLong("memoryTotal"),
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 }

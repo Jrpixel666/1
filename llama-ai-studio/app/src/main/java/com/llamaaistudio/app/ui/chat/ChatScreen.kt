@@ -299,7 +299,7 @@ private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating:
         is EngineState.Ready -> if (isGenerating) {
             "Generating · %.1f tok/s".format(liveTps)
         } else {
-            state.info.desc
+            state.info.desc + if (state.info.onGpu) " · GPU + CPU" else " · CPU"
         }
     }
     Text(text, style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)

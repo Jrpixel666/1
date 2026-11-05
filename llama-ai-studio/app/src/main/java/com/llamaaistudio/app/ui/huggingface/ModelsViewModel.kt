@@ -93,12 +93,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             val settings = app.settingsRepository.settings.first()
             val result = app.llamaEngine.loadModel(
                 model.filePath,
-                ModelLoadParams(
-                    contextLength = settings.contextLength,
-                    threads = settings.threads,
-                    threadsBatch = settings.threads,
-                    useMlock = settings.useMlock,
-                ),
+                settings.loadParams(),
             )
             // Only a successful load becomes "last used" — otherwise a broken file would be
             // retried automatically on every app launch.

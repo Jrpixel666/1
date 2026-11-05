@@ -9,7 +9,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.llamaaistudio.app.engine.GenerationParams
-import com.llamaaistudio.app.engine.LlamaNative
+import com.llamaaistudio.app.engine.CpuTopology
+import com.llamaaistudio.app.engine.ModelLoadParams
 import com.llamaaistudio.imagegen.ImageGenParams
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -18,15 +19,35 @@ private val Context.settingsDataStore by preferencesDataStore(name = "studio_set
 
 enum class PerformanceProfile { BATTERY_SAVER, BALANCED, MAX_PERFORMANCE }
 
+/** Where the chat model runs. GPU_AND_CPU offloads [StudioSettings.gpuLayers] layers via Vulkan. */
+enum class ComputeMode { CPU_ONLY, GPU_AND_CPU }
+
+/** Sentinel for "offload every layer". */
+const val ALL_GPU_LAYERS = -1
+
 data class StudioSettings(
     val threads: Int,
+    /** Threads for prompt processing (compute-bound, so it can use the efficiency cores too). */
+    val threadsBatch: Int,
+    val computeMode: ComputeMode,
+    /** Layers on the GPU in GPU_AND_CPU mode; [ALL_GPU_LAYERS] = all. */
+    val gpuLayers: Int,
     val contextLength: Int,
     val profile: PerformanceProfile,
     val useMlock: Boolean,
     val lastChatSessionId: Long?,
     val chatParams: GenerationParams,
     val imageParams: ImageGenParams,
-)
+) {
+    /** Exactly what a model load should use, derived from these settings. */
+    fun loadParams(): ModelLoadParams = ModelLoadParams(
+        contextLength = contextLength,
+        threads = threads,
+        threadsBatch = threadsBatch,
+        gpuLayers = if (computeMode == ComputeMode.GPU_AND_CPU) gpuLayers else 0,
+        useMlock = useMlock,
+    )
+}
 
 /**
  * Persists user-tunable inference/performance settings, the last-open chat session, and the
@@ -38,6 +59,9 @@ data class StudioSettings(
 class SettingsRepository(private val context: Context) {
     private object Keys {
         val THREADS = intPreferencesKey("threads")
+        val THREADS_BATCH = intPreferencesKey("threads_batch")
+        val COMPUTE_MODE = stringPreferencesKey("compute_mode")
+        val GPU_LAYERS = intPreferencesKey("gpu_layers")
         val CONTEXT_LENGTH = intPreferencesKey("context_length")
         val PROFILE = stringPreferencesKey("perf_profile")
         val USE_MLOCK = booleanPreferencesKey("use_mlock")
@@ -60,7 +84,11 @@ class SettingsRepository(private val context: Context) {
         val defaultChat = GenerationParams()
         val defaultImage = ImageGenParams()
         StudioSettings(
-            threads = prefs[Keys.THREADS] ?: LlamaNative.nativeThreadCountRecommendation(),
+            threads = prefs[Keys.THREADS] ?: CpuTopology.performanceCores,
+            threadsBatch = prefs[Keys.THREADS_BATCH] ?: CpuTopology.totalCores,
+            computeMode = prefs[Keys.COMPUTE_MODE]?.let { runCatching { ComputeMode.valueOf(it) }.getOrNull() }
+                ?: ComputeMode.CPU_ONLY,
+            gpuLayers = prefs[Keys.GPU_LAYERS] ?: ALL_GPU_LAYERS,
             contextLength = prefs[Keys.CONTEXT_LENGTH] ?: 4096,
             profile = prefs[Keys.PROFILE]?.let { runCatching { PerformanceProfile.valueOf(it) }.getOrNull() }
                 ?: PerformanceProfile.BALANCED,
@@ -91,22 +119,52 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.CONTEXT_LENGTH] = length }
     }
 
-    suspend fun setProfile(profile: PerformanceProfile) {
-        context.settingsDataStore.edit { it[Keys.PROFILE] = profile.name }
-        when (profile) {
-            PerformanceProfile.BATTERY_SAVER -> {
-                setThreads((LlamaNative.nativeThreadCountRecommendation() / 2).coerceAtLeast(2))
-                setContextLength(2048)
-            }
-            PerformanceProfile.BALANCED -> {
-                setThreads(LlamaNative.nativeThreadCountRecommendation())
-                setContextLength(4096)
-            }
-            PerformanceProfile.MAX_PERFORMANCE -> {
-                setThreads(LlamaNative.nativeThreadCountRecommendation() + 1)
-                setContextLength(8192)
+    /**
+     * Profiles, tuned for big.LITTLE phones like Tensor G4 (1 + 3 fast cores, 4 efficiency):
+     * - Battery saver: half the fast cores, CPU only, 2K context.
+     * - Balanced: the fast cores for both phases, CPU only, 4K context.
+     * - Max performance: fast cores for generation, every core for prompt processing, and the
+     *   GPU (Vulkan) on top when this device has one — all layers offloaded, 8K context.
+     */
+    suspend fun setProfile(profile: PerformanceProfile, gpuAvailable: Boolean = false) {
+        val perf = CpuTopology.performanceCores
+        val all = CpuTopology.totalCores
+        context.settingsDataStore.edit {
+            it[Keys.PROFILE] = profile.name
+            when (profile) {
+                PerformanceProfile.BATTERY_SAVER -> {
+                    it[Keys.THREADS] = (perf / 2).coerceAtLeast(2)
+                    it[Keys.THREADS_BATCH] = (perf / 2).coerceAtLeast(2)
+                    it[Keys.CONTEXT_LENGTH] = 2048
+                    it[Keys.COMPUTE_MODE] = ComputeMode.CPU_ONLY.name
+                }
+                PerformanceProfile.BALANCED -> {
+                    it[Keys.THREADS] = perf
+                    it[Keys.THREADS_BATCH] = perf
+                    it[Keys.CONTEXT_LENGTH] = 4096
+                    it[Keys.COMPUTE_MODE] = ComputeMode.CPU_ONLY.name
+                }
+                PerformanceProfile.MAX_PERFORMANCE -> {
+                    it[Keys.THREADS] = perf
+                    it[Keys.THREADS_BATCH] = all
+                    it[Keys.CONTEXT_LENGTH] = 8192
+                    it[Keys.COMPUTE_MODE] = (if (gpuAvailable) ComputeMode.GPU_AND_CPU else ComputeMode.CPU_ONLY).name
+                    it[Keys.GPU_LAYERS] = ALL_GPU_LAYERS
+                }
             }
         }
+    }
+
+    suspend fun setThreadsBatch(threads: Int) {
+        context.settingsDataStore.edit { it[Keys.THREADS_BATCH] = threads }
+    }
+
+    suspend fun setComputeMode(mode: ComputeMode) {
+        context.settingsDataStore.edit { it[Keys.COMPUTE_MODE] = mode.name }
+    }
+
+    suspend fun setGpuLayers(layers: Int) {
+        context.settingsDataStore.edit { it[Keys.GPU_LAYERS] = layers }
     }
 
     suspend fun setUseMlock(enabled: Boolean) {

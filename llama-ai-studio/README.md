@@ -55,14 +55,28 @@ built CPU-only for this ABI:
   upstream's own `examples/llama.android` reference project.
 - OpenMP threading (also per the upstream Android reference).
 
-**Vulkan is not compiled into this build.** `ggml-vulkan`'s shader compiler
-(`vulkan-shaders-gen`) is built as a target-ABI binary by llama.cpp's own CMake, which
-cannot run on the x86-64 host doing the cross-compile — making it work requires patching
-the build to compile that one tool for the host separately. That's a real, scoped follow-up,
-not a hand-wave: `LlamaNative.supportsVulkan()` and the whole backend-selection UI are wired
-up and will report `true` the day a build defines `GGML_USE_VULKAN`; until then the app is
-explicit in the Performance tab that it's running CPU/NEON/KleidiAI only, rather than
-claiming GPU acceleration it doesn't have.
+**Vulkan GPU backend (GPU + CPU).** `ggml-vulkan` is compiled in for arm64-v8a
+(`LLAMA_STUDIO_VULKAN`, on by default): it builds against the vendored Khronos headers in
+`third_party/vulkan` (the NDK's are C-only and too old), links the NDK `libvulkan.so` stub —
+the phone's own Vulkan driver at runtime (Mali-G715 on Tensor G4) — and compiles its shaders
+with the NDK's `glslc`. ggml builds its `vulkan-shaders-gen` helper for the host
+automatically while cross-compiling.
+
+- **Performance → Inference backend** shows the detected GPU and lets you choose **CPU only**
+  or **GPU + CPU**, with a slider for how many layers go to the GPU (the rest run on the
+  CPU). *CPU only* really is CPU only (no GPU devices are given to llama.cpp, so even big
+  prompt batches stay on the CPU). **Apply** reloads the model with the new placement.
+- **Auto-tune** measures this model on this phone — CPU generation at several thread counts
+  (changed live with `llama_set_n_threads`, no reload) and GPU + CPU with every layer
+  offloaded — then saves and applies whichever generates fastest. Mobile GPUs aren't always
+  faster than the CPU for LLMs, so this is measured rather than assumed.
+- Threads are big.LITTLE-aware (`CpuTopology`): generation uses the fast cores only
+  (4 on Tensor G4: X4 + 3× A720), prompt processing can use all 8.
+- **Max performance** profile = fast cores for generation, all cores for prompts, GPU + CPU
+  with all layers when a Vulkan GPU is present, 8K context.
+- Safety net: a marker file is written around every GPU load/generation; if the app dies
+  inside the GPU driver, the next launch switches back to CPU only instead of crashing again
+  on the automatic model restore, and the Performance tab explains what happened.
 
 ## Image generation scope
 

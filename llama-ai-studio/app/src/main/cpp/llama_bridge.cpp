@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "ggml-backend.h"
 #include "llama.h"
 #include "jni_utils.h"
 #include <nlohmann/json.hpp>
@@ -26,10 +27,28 @@ struct Session {
     llama_context *ctx = nullptr;
     const llama_vocab *vocab = nullptr;
     std::atomic<bool> cancel{false};
+    int32_t gpuLayersRequested = 0;
     std::mutex decodeMutex; // serialises calls against this context
 };
 
 std::once_flag g_backendOnce;
+
+// NULL-terminated, empty device list: passing it as llama_model_params::devices keeps every
+// layer *and* every op on the CPU (n_gpu_layers = 0 alone still lets llama.cpp offload big
+// prompt batches to the GPU through op_offload).
+ggml_backend_dev_t g_noDevices[1] = {nullptr};
+
+bool isGpuDevice(ggml_backend_dev_t dev) {
+    auto t = ggml_backend_dev_type(dev);
+    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+
+bool hasGpuDevice() {
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (isGpuDevice(ggml_backend_dev_get(i))) return true;
+    }
+    return false;
+}
 
 std::string jsonEscape(const std::string &in) {
     std::string out;
@@ -160,7 +179,10 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
     std::string modelPath = jstringToUtf8(env, jModelPath);
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = nGpuLayers; // 0 in the CPU-only build this ships with
+    // nGpuLayers: 0 = CPU only, N = offload N layers to the GPU (Vulkan), < 0 = all layers.
+    const bool useGpu = nGpuLayers != 0 && hasGpuDevice();
+    mparams.n_gpu_layers = useGpu ? (nGpuLayers < 0 ? 999 : nGpuLayers) : 0;
+    if (!useGpu) mparams.devices = g_noDevices;
     if (useMlock) {
         mparams.load_mode = useMmap ? LLAMA_LOAD_MODE_MMAP_MLOCK : LLAMA_LOAD_MODE_MLOCK;
     } else {
@@ -180,6 +202,8 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
     cparams.n_threads = nThreads;
     cparams.n_threads_batch = nThreadsBatch;
     cparams.no_perf = true; // the bridge does its own wall-clock timing
+    cparams.offload_kqv = useGpu; // KV cache on the GPU only when layers are there too
+    cparams.op_offload = useGpu;
 
     llama_context *ctx = llama_init_from_model(model, cparams);
     if (ctx == nullptr) {
@@ -189,6 +213,7 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
     }
 
     auto *session = new Session();
+    session->gpuLayersRequested = mparams.n_gpu_layers;
     session->model = model;
     session->ctx = ctx;
     session->vocab = llama_model_get_vocab(model);
@@ -218,6 +243,8 @@ Java_com_llamaaistudio_app_engine_LlamaNative_getModelInfo(JNIEnv *env, jobject,
     int32_t nCtxTrain = llama_model_n_ctx_train(session->model);
     int32_t nVocab = llama_vocab_n_tokens(session->vocab);
     bool hasChatTemplate = llama_model_chat_template(session->model, nullptr) != nullptr;
+    int32_t nLayer = llama_model_n_layer(session->model);
+    int32_t gpuLayers = std::min(session->gpuLayersRequested, nLayer + 1); // +1: output layer
 
     std::ostringstream oss;
     oss << "{"
@@ -226,7 +253,9 @@ Java_com_llamaaistudio_app_engine_LlamaNative_getModelInfo(JNIEnv *env, jobject,
         << "\"sizeBytes\":" << sizeBytes << ","
         << "\"nCtxTrain\":" << nCtxTrain << ","
         << "\"nVocab\":" << nVocab << ","
-        << "\"hasChatTemplate\":" << (hasChatTemplate ? "true" : "false")
+        << "\"hasChatTemplate\":" << (hasChatTemplate ? "true" : "false") << ","
+        << "\"nLayer\":" << nLayer << ","
+        << "\"gpuLayers\":" << gpuLayers
         << "}";
     return utf8ToJstring(env, oss.str());
 }
@@ -427,11 +456,45 @@ Java_com_llamaaistudio_app_engine_LlamaNative_cancelGeneration(JNIEnv *, jobject
 
 JNIEXPORT jboolean JNICALL
 Java_com_llamaaistudio_app_engine_LlamaNative_supportsVulkan(JNIEnv *, jobject) {
-#if defined(GGML_USE_VULKAN)
-    return JNI_TRUE;
-#else
-    return JNI_FALSE;
-#endif
+    // Runtime check: the Vulkan backend is compiled in, but only counts if this device's
+    // driver actually exposes a usable GPU to it.
+    std::call_once(g_backendOnce, []() { llama_backend_init(); });
+    return hasGpuDevice() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_llamaaistudio_app_engine_LlamaNative_listDevices(JNIEnv *env, jobject) {
+    std::call_once(g_backendOnce, []() { llama_backend_init(); });
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        size_t freeMem = 0, totalMem = 0;
+        ggml_backend_dev_memory(dev, &freeMem, &totalMem);
+        const char *type = "accel";
+        switch (ggml_backend_dev_type(dev)) {
+            case GGML_BACKEND_DEVICE_TYPE_CPU: type = "cpu"; break;
+            case GGML_BACKEND_DEVICE_TYPE_GPU: type = "gpu"; break;
+            case GGML_BACKEND_DEVICE_TYPE_IGPU: type = "igpu"; break;
+            default: break;
+        }
+        if (i > 0) oss << ",";
+        oss << "{\"name\":\"" << jsonEscape(ggml_backend_dev_name(dev)) << "\","
+            << "\"description\":\"" << jsonEscape(ggml_backend_dev_description(dev)) << "\","
+            << "\"type\":\"" << type << "\","
+            << "\"memoryFree\":" << freeMem << ",\"memoryTotal\":" << totalMem << "}";
+    }
+    oss << "]";
+    return utf8ToJstring(env, oss.str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_llamaaistudio_app_engine_LlamaNative_setThreads(JNIEnv *, jobject, jlong handle, jint nThreads,
+                                                         jint nThreadsBatch) {
+    if (handle == 0) return;
+    auto *session = reinterpret_cast<Session *>(handle);
+    std::lock_guard<std::mutex> lock(session->decodeMutex);
+    llama_set_n_threads(session->ctx, nThreads, nThreadsBatch);
 }
 
 JNIEXPORT jint JNICALL
