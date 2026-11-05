@@ -23,6 +23,16 @@ interface HfApi {
         @Query("limit") limit: Int = 40,
     ): List<HfModelSummary>
 
+    /** LiteRT-LM (.litertlm) models published by the LiteRT community. */
+    @GET("api/models")
+    suspend fun searchLiteRt(
+        @Query("search") search: String? = null,
+        @Query("author") author: String = "litert-community",
+        @Query("sort") sort: String = "downloads",
+        @Query("direction") direction: Int = -1,
+        @Query("limit") limit: Int = 40,
+    ): List<HfModelSummary>
+
     @GET("api/models/{id}")
     suspend fun getModelDetail(
         @Path("id", encoded = true) id: String,

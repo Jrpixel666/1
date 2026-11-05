@@ -136,6 +136,7 @@ private fun DiscoverTab(
     val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
     val cloudModel by viewModel.cloudChatModel.collectAsStateWithLifecycle()
     val fit by viewModel.fit.collectAsStateWithLifecycle()
+    val liteRt by viewModel.liteRt.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(hasKey) {
         if (hasKey && !cloud.loaded) viewModel.refreshCloudModels()
     }
@@ -213,7 +214,43 @@ private fun DiscoverTab(
             }
         }
 
-        // 2) OpenCode free cloud models
+        // 2) LiteRT-LM models (Google's runtime: GPU / NPU on Pixel)
+        item(key = "lrt_header") {
+            Column(modifier = Modifier.padding(top = 16.dp)) {
+                Text("LiteRT-LM models", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+                Text(
+                    "Google's on-device runtime (.litertlm) — GPU or NPU on Pixel. Backend in Settings (⚙).",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StudioTextMuted,
+                )
+            }
+        }
+        item(key = "lrt_search") {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                OutlinedTextField(
+                    value = liteRt.query,
+                    onValueChange = viewModel::onLiteRtQueryChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search LiteRT community (e.g. gemma, qwen)…") },
+                    singleLine = true,
+                )
+                IconButton(onClick = viewModel::searchLiteRt) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search LiteRT models", tint = StudioOrange)
+                }
+            }
+        }
+        if (liteRt.searching) item(key = "lrt_loading") { CircularProgressIndicator(modifier = Modifier.padding(16.dp)) }
+        liteRt.error?.let { e -> item(key = "lrt_error") { Text(e, color = MaterialTheme.colorScheme.error) } }
+        if (liteRt.searched && !liteRt.searching && liteRt.results.isEmpty()) {
+            item(key = "lrt_empty") { Text("No LiteRT models match.", color = StudioTextMuted, modifier = Modifier.padding(8.dp)) }
+        }
+        items(liteRt.results, key = { "lrt_" + it.id }) { summary ->
+            Box(modifier = Modifier.padding(top = 8.dp)) {
+                ModelSummaryCard(summary) { viewModel.openDetail(summary.id) }
+            }
+        }
+
+        // 3) OpenCode free cloud models
         openCodeModelSection(
             title = "OpenCode · free models",
             subtitle = "Cloud models from opencode.ai with your API key — only free ones are shown",

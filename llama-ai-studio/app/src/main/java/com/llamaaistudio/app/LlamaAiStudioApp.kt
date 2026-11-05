@@ -14,6 +14,8 @@ import com.llamaaistudio.app.data.repo.ImageModelRepository
 import com.llamaaistudio.app.data.repo.ModelRepository
 import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.AiRouter
+import com.llamaaistudio.app.engine.EngineState
+import com.llamaaistudio.app.engine.LiteRtEngine
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
 import com.llamaaistudio.app.linux.LinuxEnvironment
@@ -63,6 +65,33 @@ class LlamaAiStudioApp : Application() {
     /** Optional OpenCode Zen cloud models (user's own API key). */
     lateinit var openCode: OpenCodeRepository
         private set
+
+    /** Google's LiteRT-LM runtime for .litertlm models (GPU / CPU / NPU). */
+    lateinit var liteRtEngine: LiteRtEngine
+        private set
+
+    /** The on-device engine that has a model (LiteRT-LM if loaded, else llama.cpp). */
+    val localEngineState: StateFlow<EngineState> by lazy {
+        combine(llamaEngine.state, liteRtEngine.state) { llama, lite -> if (lite !is EngineState.Idle) lite else llama }
+            .stateIn(applicationScope, SharingStarted.Eagerly, EngineState.Idle)
+    }
+
+    /**
+     * Loads a local model with the engine its file needs (.litertlm → LiteRT-LM, .gguf →
+     * llama.cpp) and unloads the other engine so two models never compete for RAM.
+     */
+    suspend fun loadLocalModel(path: String): Boolean {
+        val settings = settingsRepository.settings.first()
+        val ok = if (path.endsWith(".litertlm", ignoreCase = true)) {
+            llamaEngine.unloadModel()
+            liteRtEngine.loadModel(path, settings.liteRtBackend, settings.contextLength, settings.threads).isSuccess
+        } else {
+            liteRtEngine.unload()
+            llamaEngine.loadModel(path, settings.loadParams()).isSuccess
+        }
+        if (ok) modelRepository.markUsed(path)
+        return ok
+    }
 
     /** Routes "ask the AI" to the selected OpenCode model or the on-device model. */
     lateinit var ai: AiRouter
@@ -128,7 +157,8 @@ class LlamaAiStudioApp : Application() {
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
         openCode = OpenCodeRepository(this, httpClient)
-        ai = AiRouter(llamaEngine, openCode)
+        liteRtEngine = LiteRtEngine(java.io.File(cacheDir, "litertlm"), applicationInfo.nativeLibraryDir)
+        ai = AiRouter(llamaEngine, liteRtEngine, openCode)
         chatRepository = ChatRepository(database.chatDao(), ai)
         modelRepository = ModelRepository(this, database.modelDao())
         hfApi = HfApi.create(httpClient)
@@ -239,12 +269,7 @@ class LlamaAiStudioApp : Application() {
             modelRepository.getMostRecentlyUsed()?.let { model ->
                 val fits = modelRepository.estimateRamRequirementBytes(model.sizeBytes, settings.contextLength) <
                     modelRepository.availableMemoryBytes() * 0.7
-                if (fits && File(model.filePath).exists()) {
-                    llamaEngine.loadModel(
-                        model.filePath,
-                        settings.loadParams(),
-                    )
-                }
+                if (fits && File(model.filePath).exists()) loadLocalModel(model.filePath)
             }
 
             // Checked again (not just once up front): loading the chat model above, if it

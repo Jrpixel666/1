@@ -17,8 +17,8 @@ android {
         applicationId = "com.llamaaistudio.app"
         minSdk = 31 // Pixel 9 ships Android 14+; 31 keeps headroom for the thermal/perf APIs we rely on
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.8.0"
+        versionCode = 10
+        versionName = "1.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -79,9 +79,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildFeatures {
         compose = true
@@ -159,10 +156,13 @@ dependencies {
     implementation("androidx.window:window:1.3.0")
 
     // Persistence
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // LiteRT-LM: Google's on-device LLM runtime (.litertlm models, CPU / GPU / NPU)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.0")
 
     // Built-in Linux: unpacking the Alpine root filesystem (tar.gz with symlinks/modes)
     implementation("org.apache.commons:commons-compress:1.27.1")
@@ -171,8 +171,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
-    implementation("com.squareup.moshi:moshi:1.15.1")
-    ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.1")
+    implementation("com.squareup.moshi:moshi:1.15.2")
+    ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.2")
 
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests (android.jar only ships throwing stubs).
@@ -182,4 +182,10 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

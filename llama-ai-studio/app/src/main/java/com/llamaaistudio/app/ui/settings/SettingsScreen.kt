@@ -68,6 +68,9 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val settings by app.settingsRepository.settings.collectAsStateWithLifecycle(initialValue = null)
+    val localState by app.localEngineState.collectAsStateWithLifecycle()
+    var reloading by remember { mutableStateOf(false) }
 
     fun test() {
         testing = true
@@ -93,6 +96,22 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
             modifier = Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            settings?.let { s ->
+                EnginesCard(
+                    app = app,
+                    settings = s,
+                    localState = localState,
+                    reloading = reloading,
+                    onReload = {
+                        val path = (localState as? com.llamaaistudio.app.engine.EngineState.Ready)?.modelPath
+                        if (path != null) {
+                            reloading = true
+                            scope.launch { app.loadLocalModel(path); reloading = false }
+                        }
+                    },
+                )
+            }
+
             Card(colors = CardDefaults.cardColors(containerColor = StudioPanel)) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text("OpenCode", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
@@ -183,6 +202,98 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                         style = MaterialTheme.typography.labelSmall,
                         color = StudioTextMuted,
                     )
+                }
+            }
+        }
+    }
+}
+
+/** Which on-device engine runs where: LiteRT-LM backend + llama.cpp placement. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun EnginesCard(
+    app: LlamaAiStudioApp,
+    settings: com.llamaaistudio.app.data.datastore.StudioSettings,
+    localState: com.llamaaistudio.app.engine.EngineState,
+    reloading: Boolean,
+    onReload: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val loadedLite = app.liteRtEngine.loaded
+    val llamaParams = app.llamaEngine.currentLoadParams
+    val ready = localState as? com.llamaaistudio.app.engine.EngineState.Ready
+    val needsReload = when {
+        loadedLite != null -> loadedLite.backend != settings.liteRtBackend
+        llamaParams != null -> llamaParams.gpuLayers != settings.loadParams().gpuLayers
+        else -> false
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = StudioPanel)) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text("On-device engines", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+            Text(
+                "Models load with the engine their file needs: .litertlm → LiteRT-LM, .gguf → llama.cpp. " +
+                    "Only one model is loaded at a time.",
+                style = MaterialTheme.typography.bodySmall,
+                color = StudioTextMuted,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("LiteRT-LM (Google) runs on", style = MaterialTheme.typography.labelLarge)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    com.llamaaistudio.app.engine.LiteRtBackend.GPU to "GPU",
+                    com.llamaaistudio.app.engine.LiteRtBackend.NPU to "NPU (Tensor)",
+                    com.llamaaistudio.app.engine.LiteRtBackend.CPU to "CPU",
+                ).forEach { (b, label) ->
+                    androidx.compose.material3.FilterChip(
+                        selected = settings.liteRtBackend == b,
+                        onClick = { scope.launch { app.settingsRepository.setLiteRtBackend(b) } },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            Text(
+                "GPU is the usual choice on Pixel. NPU only works with models built for it (often named " +
+                    "for the chip); if loading fails, switch to GPU or CPU.",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("llama.cpp (GGUF) runs on", style = MaterialTheme.typography.labelLarge)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.FilterChip(
+                    selected = settings.computeMode == com.llamaaistudio.app.data.datastore.ComputeMode.CPU_ONLY,
+                    onClick = { scope.launch { app.settingsRepository.setComputeMode(com.llamaaistudio.app.data.datastore.ComputeMode.CPU_ONLY) } },
+                    label = { Text("CPU only") },
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = settings.computeMode == com.llamaaistudio.app.data.datastore.ComputeMode.GPU_AND_CPU,
+                    onClick = {
+                        scope.launch {
+                            app.settingsRepository.setComputeMode(com.llamaaistudio.app.data.datastore.ComputeMode.GPU_AND_CPU)
+                        }
+                    },
+                    label = { Text("GPU + CPU (auto-fit)") },
+                )
+            }
+            Text(
+                "Threads, context length, GPU layers, benchmark and Auto-tune are in the Perf tab.",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Loaded now: " + when {
+                    loadedLite != null -> "${loadedLite.name} · LiteRT-LM on ${loadedLite.backend}"
+                    ready != null -> ready.info.desc + if (ready.info.onGpu) " · llama.cpp GPU + CPU" else " · llama.cpp CPU"
+                    else -> "nothing"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (ready != null) StudioSuccess else StudioTextMuted,
+            )
+            if (needsReload) {
+                Spacer(Modifier.height(6.dp))
+                Button(onClick = onReload, enabled = !reloading) {
+                    Text(if (reloading) "Reloading…" else "Apply — reload model")
                 }
             }
         }

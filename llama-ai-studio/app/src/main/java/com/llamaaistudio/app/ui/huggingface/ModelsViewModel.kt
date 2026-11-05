@@ -14,6 +14,7 @@ import com.llamaaistudio.app.data.hf.GgufFileOption
 import com.llamaaistudio.app.data.hf.HfModelDetail
 import com.llamaaistudio.app.data.hf.HfModelSummary
 import com.llamaaistudio.app.data.hf.ggufFiles
+import com.llamaaistudio.app.data.hf.litertFiles
 import com.llamaaistudio.app.engine.ModelLoadParams
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +44,14 @@ data class DeviceFitUiState(
 
 data class DeviceFitResult(val modelId: String, val downloads: Long, val pick: DeviceFit.Pick)
 
+data class LiteRtSearchState(
+    val query: String = "",
+    val searching: Boolean = false,
+    val searched: Boolean = false,
+    val results: List<HfModelSummary> = emptyList(),
+    val error: String? = null,
+)
+
 data class CloudUiState(
     val query: String = "",
     val loading: Boolean = false,
@@ -68,7 +77,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000),
             emptyList(),
         )
-    val engineState = app.llamaEngine.state
+    val engineState = app.localEngineState
 
     // --- "Find models for CPU + GPU" ---------------------------------------------------------
 
@@ -209,7 +218,29 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         _uiState.value = _uiState.value.copy(expandedDetail = null)
     }
 
-    fun filesFor(detail: HfModelDetail): List<GgufFileOption> = detail.ggufFiles()
+    fun filesFor(detail: HfModelDetail): List<GgufFileOption> = detail.ggufFiles() + detail.litertFiles()
+
+    // --- LiteRT-LM model search ---------------------------------------------------------------
+
+    private val _liteRt = MutableStateFlow(LiteRtSearchState())
+    val liteRt: StateFlow<LiteRtSearchState> = _liteRt
+
+    fun onLiteRtQueryChange(q: String) {
+        _liteRt.value = _liteRt.value.copy(query = q)
+    }
+
+    fun searchLiteRt() {
+        viewModelScope.launch {
+            _liteRt.value = _liteRt.value.copy(searching = true, error = null)
+            val r = runCatching { app.hfApi.searchLiteRt(search = _liteRt.value.query.trim().ifEmpty { null }) }
+            _liteRt.value = _liteRt.value.copy(
+                searching = false,
+                searched = true,
+                results = r.getOrDefault(emptyList()),
+                error = r.exceptionOrNull()?.let { "LiteRT search failed: ${it.message}" },
+            )
+        }
+    }
 
     fun download(file: GgufFileOption) = app.downloadManager.start(file)
     fun pauseDownload(file: GgufFileOption) = app.downloadManager.pause(file)
@@ -225,21 +256,13 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun loadModel(model: LocalModelEntity) {
-        viewModelScope.launch {
-            val settings = app.settingsRepository.settings.first()
-            val result = app.llamaEngine.loadModel(
-                model.filePath,
-                settings.loadParams(),
-            )
-            // Only a successful load becomes "last used" — otherwise a broken file would be
-            // retried automatically on every app launch.
-            if (result.isSuccess) app.modelRepository.markUsed(model.filePath)
-        }
+        viewModelScope.launch { app.loadLocalModel(model.filePath) }
     }
 
     fun deleteModel(model: LocalModelEntity) {
         viewModelScope.launch {
             if (app.llamaEngine.currentModelPath() == model.filePath) app.llamaEngine.unloadModel()
+            if (app.liteRtEngine.loaded?.path == model.filePath) app.liteRtEngine.unload()
             if (!app.modelRepository.deleteModel(model)) {
                 _uiState.value = _uiState.value.copy(error = "Could not delete ${model.displayName}")
             }

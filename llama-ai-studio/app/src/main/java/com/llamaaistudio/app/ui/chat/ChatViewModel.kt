@@ -46,12 +46,13 @@ class ChatViewModel(
     private val modelRepository: ModelRepository,
     private val llamaEngine: LlamaEngine,
     private val settingsRepository: SettingsRepository,
+    private val localEngineState: StateFlow<EngineState>,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState
 
-    val engineState: StateFlow<EngineState> = llamaEngine.state
+    val engineState: StateFlow<EngineState> = localEngineState
 
     val genParams = MutableStateFlowHolder(GenerationParams())
 
@@ -251,6 +252,7 @@ class ChatViewModel(
                 app.modelRepository,
                 app.llamaEngine,
                 app.settingsRepository,
+                app.localEngineState,
             ) as T
     }
 }

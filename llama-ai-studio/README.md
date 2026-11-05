@@ -200,6 +200,21 @@ verified only by running it there.
 A foreground service (`BackgroundWorkService`) keeps servers, builds and installs running
 while you switch apps, with a **Stop all** action in its notification.
 
+## LiteRT-LM (second on-device engine)
+
+[LiteRT-LM](https://ai.google.dev/edge/litert-lm/android) (`com.google.ai.edge.litertlm:litertlm-android`)
+runs Google's `.litertlm` models (Gemma, Qwen, Phi… from the LiteRT community on Hugging Face) on
+the **GPU** (OpenCL), **CPU** or **NPU**. It sits next to llama.cpp: a model loads with the engine
+its file needs (`.litertlm` → LiteRT-LM, `.gguf` → llama.cpp) and the other engine is unloaded.
+Chat, Web/Dev Studio and the Image assistant use it through `AiRouter`.
+
+- **Models → LiteRT-LM models** searches `litert-community`; the file list hides builds compiled
+  for one specific NPU (Tensor G5/G6, Qualcomm, MediaTek, Intel) or the web, lists `-gpu` builds
+  first, and marks gated repos. There are no NPU builds for Tensor G4 (Pixel 9) — use GPU.
+- **Settings (Models → ⚙)** now starts with *On-device engines*: LiteRT-LM backend (GPU / NPU /
+  CPU), llama.cpp placement (CPU only / GPU + CPU auto-fit), what's loaded, and Apply-reload.
+- Requires Kotlin ≥ 2.2: the project moved to Kotlin 2.4.21, AGP 8.13.2, KSP 2.3.13, Room 2.8.4.
+
 ## OpenCode (optional cloud models)
 
 **Models → ⚙ Settings** takes an [OpenCode Zen](https://opencode.ai/docs/zen) API key. It is

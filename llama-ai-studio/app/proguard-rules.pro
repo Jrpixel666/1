@@ -22,3 +22,9 @@
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**
 -dontwarn kotlinx.coroutines.**
+
+# LiteRT-LM: its JNI layer calls back into these Kotlin classes by name and serialises
+# messages with Gson (reflection); the AAR ships no consumer rules of its own.
+-keep class com.google.ai.edge.litertlm.** { *; }
+-keep class com.google.gson.** { *; }
+-dontwarn com.google.ai.edge.litertlm.**

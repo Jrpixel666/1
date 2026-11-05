@@ -35,6 +35,8 @@ data class StudioSettings(
     val computeMode: ComputeMode,
     /** Layers on the GPU in GPU_AND_CPU mode; [ALL_GPU_LAYERS] = all, [AUTO_GPU_LAYERS] = fit. */
     val gpuLayers: Int,
+    /** Hardware for LiteRT-LM (.litertlm) models. */
+    val liteRtBackend: com.llamaaistudio.app.engine.LiteRtBackend,
     val contextLength: Int,
     val profile: PerformanceProfile,
     val useMlock: Boolean,
@@ -65,6 +67,7 @@ class SettingsRepository(private val context: Context) {
         val THREADS_BATCH = intPreferencesKey("threads_batch")
         val COMPUTE_MODE = stringPreferencesKey("compute_mode")
         val GPU_LAYERS = intPreferencesKey("gpu_layers")
+        val LITERT_BACKEND = stringPreferencesKey("litert_backend")
         val CONTEXT_LENGTH = intPreferencesKey("context_length")
         val PROFILE = stringPreferencesKey("perf_profile")
         val USE_MLOCK = booleanPreferencesKey("use_mlock")
@@ -92,6 +95,9 @@ class SettingsRepository(private val context: Context) {
             computeMode = prefs[Keys.COMPUTE_MODE]?.let { runCatching { ComputeMode.valueOf(it) }.getOrNull() }
                 ?: ComputeMode.CPU_ONLY,
             gpuLayers = prefs[Keys.GPU_LAYERS] ?: AUTO_GPU_LAYERS,
+            liteRtBackend = prefs[Keys.LITERT_BACKEND]?.let {
+                runCatching { com.llamaaistudio.app.engine.LiteRtBackend.valueOf(it) }.getOrNull()
+            } ?: com.llamaaistudio.app.engine.LiteRtBackend.GPU,
             contextLength = prefs[Keys.CONTEXT_LENGTH] ?: 4096,
             profile = prefs[Keys.PROFILE]?.let { runCatching { PerformanceProfile.valueOf(it) }.getOrNull() }
                 ?: PerformanceProfile.BALANCED,
@@ -164,6 +170,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setComputeMode(mode: ComputeMode) {
         context.settingsDataStore.edit { it[Keys.COMPUTE_MODE] = mode.name }
+    }
+
+    suspend fun setLiteRtBackend(backend: com.llamaaistudio.app.engine.LiteRtBackend) {
+        context.settingsDataStore.edit { it[Keys.LITERT_BACKEND] = backend.name }
     }
 
     suspend fun setGpuLayers(layers: Int) {

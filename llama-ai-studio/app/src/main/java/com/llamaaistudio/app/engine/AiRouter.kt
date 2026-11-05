@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
  */
 class AiRouter(
     private val local: LlamaEngine,
+    private val liteRt: LiteRtEngine,
     private val cloud: OpenCodeRepository,
 ) {
     /** The cloud model in use, or null when the local model is used. */
@@ -16,19 +17,24 @@ class AiRouter(
         get() = cloud.chatModel.value?.takeIf { cloud.hasKey.value }?.name
 
     val isAvailable: Boolean
-        get() = cloudModelName != null || local.isLoaded
+        get() = cloudModelName != null || local.isLoaded || liteRt.isLoaded
 
     /** Label for where the answer comes from, e.g. "OpenCode · Big Pickle" or "on-device". */
     val sourceLabel: String
-        get() = cloudModelName?.let { "OpenCode · $it" } ?: "on-device model"
+        get() = cloudModelName?.let { "OpenCode · $it" }
+            ?: liteRt.loaded?.let { "LiteRT-LM · ${it.name} (${it.backend})" }
+            ?: "on-device model"
 
     fun generate(messages: List<ChatTurn>, params: GenerationParams = GenerationParams()): Flow<GenerationEvent> {
         val sel = cloud.chatModel.value
-        return if (sel != null && cloud.hasKey.value) cloud.chat(sel.id, messages, params)
-        else local.generate(messages, params)
+        return when {
+            sel != null && cloud.hasKey.value -> cloud.chat(sel.id, messages, params)
+            liteRt.isLoaded -> liteRt.generate(messages, params)
+            else -> local.generate(messages, params)
+        }
     }
 
     /** Where a chat session's reply came from, stored on the session ("opencode:<id>" or a GGUF path). */
     fun currentModelTag(): String? =
-        cloud.chatModel.value?.takeIf { cloud.hasKey.value }?.let { "opencode:${it.id}" } ?: local.currentModelPath()
+        cloud.chatModel.value?.takeIf { cloud.hasKey.value }?.let { "opencode:${it.id}" } ?: liteRt.loaded?.path ?: local.currentModelPath()
 }

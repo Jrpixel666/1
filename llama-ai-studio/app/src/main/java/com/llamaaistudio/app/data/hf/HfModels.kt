@@ -42,6 +42,8 @@ data class HfModelDetail(
     val tags: List<String>? = null,
     val siblings: List<HfSibling>? = null,
     val gguf: HfGgufMeta? = null,
+    /** false, or "auto"/"manual" when the repo needs its licence accepted on huggingface.co. */
+    val gated: Any? = null,
 )
 
 /** One downloadable GGUF file, flattened out of [HfModelDetail.siblings] for the UI. */
@@ -53,9 +55,13 @@ data class GgufFileOption(
     val quantization: String?,
     val paramCount: Long?,
     val contextLengthTrained: Int?,
+    /** Path inside the repo when it differs from [filename] (files in subfolders). */
+    val path: String = filename,
 ) {
     val downloadUrl: String
-        get() = "https://huggingface.co/$modelId/resolve/main/$filename"
+        get() = "https://huggingface.co/$modelId/resolve/main/$path"
+
+    val isLiteRt: Boolean get() = filename.endsWith(".litertlm", ignoreCase = true)
 
     fun estimatedRamBytes(): Long = (sizeBytes * 1.15).toLong() + 256L * 1024 * 1024
 }
@@ -77,3 +83,38 @@ fun HfModelDetail.ggufFiles(): List<GgufFileOption> =
             )
         }
         .sortedBy { it.sizeBytes }
+
+/**
+ * Builds compiled for one specific NPU (Tensor G5/G6, Qualcomm, MediaTek, Intel…) or for the
+ * web don't run on this phone's GPU/CPU — and there are none for Tensor G4 (Pixel 9).
+ */
+private val LITERT_TARGET_SPECIFIC = Regex(
+    "(Tensor_G\\d|Qualcomm|_QCS\\d|_sm\\d{4}|_mt\\d{4}|intel_|NPU_Uncompiled|-web\\.)",
+    RegexOption.IGNORE_CASE,
+)
+
+/** Generic `.litertlm` files for LiteRT-LM, GPU builds first (same download flow as GGUF). */
+fun HfModelDetail.litertFiles(): List<GgufFileOption> {
+    val isGated = gated != null && gated != false && gated.toString() != "false"
+    return siblings.orEmpty()
+        .filter { it.rfilename.endsWith(".litertlm", ignoreCase = true) && !LITERT_TARGET_SPECIFIC.containsMatchIn(it.rfilename) }
+        .map { sib ->
+            val name = sib.rfilename.substringAfterLast('/')
+            val gpu = name.contains("-gpu", ignoreCase = true)
+            GgufFileOption(
+                modelId = id,
+                filename = name,
+                sizeBytes = sib.lfs?.size ?: sib.size ?: 0L,
+                sha256 = sib.lfs?.sha256,
+                quantization = buildList {
+                    add(if (gpu) "LiteRT · GPU build" else "LiteRT")
+                    Regex("(int4|int8|q4|q8|f16|f32)", RegexOption.IGNORE_CASE).find(name)?.value?.lowercase()?.let(::add)
+                    if (isGated) add("gated: accept licence on huggingface.co first")
+                }.joinToString(" · "),
+                paramCount = null,
+                contextLengthTrained = null,
+                path = sib.rfilename,
+            )
+        }
+        .sortedWith(compareBy<GgufFileOption>({ !it.filename.contains("-gpu", true) }, { it.sizeBytes }))
+}
