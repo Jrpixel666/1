@@ -124,4 +124,14 @@ class GitHubBuildsTest {
 
     @Test
     fun repoNamesAreSafe() = assertEquals("llama-studio-golf-sss", GitHubBuilds.repoName("Golf SSS"))
+
+    @Test
+    fun unreachableHostGivesClearMessage() = runBlocking {
+        val dns = object : okhttp3.Dns { override fun lookup(hostname: String): List<java.net.InetAddress> = throw java.net.UnknownHostException("no address") }
+        var sleptOk = true
+        val gh = GitHubBuilds(OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).dns(dns).build(), { "tok" }, "https://api.github.invalid", 1, { "" })
+        val e = runCatching { gh.login() }.exceptionOrNull()
+        assertTrue(e?.message.orEmpty().contains("Can't reach GitHub"))
+        assertTrue(sleptOk)
+    }
 }

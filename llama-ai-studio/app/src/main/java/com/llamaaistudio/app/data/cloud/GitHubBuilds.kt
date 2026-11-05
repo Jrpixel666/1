@@ -45,7 +45,24 @@ class GitHubBuilds(
             .header("X-GitHub-Api-Version", "2022-11-28")
             .method(method, body?.toString()?.toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(req).execute().use { r -> return r.code to (r.body?.string() ?: "") }
+        // Phones drop DNS/connectivity for a moment (weak signal, switching Wi-Fi ↔ mobile);
+        // retry those a few times before giving up.
+        var attempt = 0
+        while (true) {
+            try {
+                client.newCall(req).execute().use { r -> return r.code to (r.body?.string() ?: "") }
+            } catch (e: java.net.UnknownHostException) {
+                if (++attempt >= 4) throw GitHubException(
+                    "Can't reach GitHub — the phone couldn't look up ${req.url.host}. Check you're online, and that " +
+                        "Private DNS, a VPN or an ad-blocker isn't blocking it (try opening https://api.github.com in Chrome)."
+                )
+            } catch (e: java.net.SocketTimeoutException) {
+                if (++attempt >= 4) throw GitHubException("GitHub didn't answer in time — check your connection and try again.")
+            } catch (e: java.net.ConnectException) {
+                if (++attempt >= 4) throw GitHubException("Couldn't connect to GitHub — check your connection and try again.")
+            }
+            Thread.sleep(2000L shl (attempt - 1)) // 2 s, 4 s, 8 s
+        }
     }
 
     private fun json(path: String, method: String = "GET", body: JSONObject? = null, ok: Set<Int> = setOf(200, 201)): JSONObject {

@@ -170,6 +170,7 @@ class LlamaAiStudioApp : Application() {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
+            .let { base -> base.newBuilder().dns(com.llamaaistudio.app.util.FallbackDns(base)).build() }
         openCode = OpenCodeRepository(this, httpClient)
         liteRtEngine = LiteRtEngine(java.io.File(cacheDir, "litertlm"), applicationInfo.nativeLibraryDir)
         ai = AiRouter(llamaEngine, liteRtEngine, openCode)
