@@ -7,7 +7,7 @@ import com.llamaaistudio.app.data.db.ChatSessionSummary
 import com.llamaaistudio.app.engine.ChatTurn
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
-import com.llamaaistudio.app.engine.LlamaEngine
+import com.llamaaistudio.app.engine.AiRouter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +26,7 @@ private const val AUTO_TITLE_MAX_CHARS = 48
 
 class ChatRepository(
     private val chatDao: ChatDao,
-    private val llamaEngine: LlamaEngine,
+    private val ai: AiRouter,
 ) {
     val sessions: Flow<List<ChatSessionEntity>> = chatDao.observeSessions()
 
@@ -127,7 +127,7 @@ class ChatRepository(
         if (isFirstUserMessage && session.title == DEFAULT_SESSION_TITLE) {
             chatDao.renameSession(session.id, autoTitleFor(userText), System.currentTimeMillis())
         }
-        llamaEngine.currentModelPath()?.let { path ->
+        ai.currentModelTag()?.let { path ->
             if (path != session.modelFilePath) chatDao.updateModel(session.id, path)
         }
 
@@ -141,7 +141,7 @@ class ChatRepository(
         var saved = false
         var failed = false
         try {
-            llamaEngine.generate(turns, params).collect { event ->
+            ai.generate(turns, params).collect { event ->
                 when (event) {
                     is GenerationEvent.Token -> {
                         assembled.append(event.piece)

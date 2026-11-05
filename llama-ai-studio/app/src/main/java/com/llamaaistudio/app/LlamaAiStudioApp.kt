@@ -1,6 +1,7 @@
 package com.llamaaistudio.app
 
 import android.app.Application
+import com.llamaaistudio.app.data.cloud.OpenCodeRepository
 import com.llamaaistudio.app.data.datastore.ComputeMode
 import com.llamaaistudio.app.data.datastore.SettingsRepository
 import com.llamaaistudio.app.data.db.AppDatabase
@@ -12,6 +13,7 @@ import com.llamaaistudio.app.data.repo.ImageGalleryRepository
 import com.llamaaistudio.app.data.repo.ImageModelRepository
 import com.llamaaistudio.app.data.repo.ModelRepository
 import com.llamaaistudio.app.data.repo.WebProjectRepository
+import com.llamaaistudio.app.engine.AiRouter
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
 import com.llamaaistudio.app.linux.LinuxEnvironment
@@ -56,6 +58,14 @@ class LlamaAiStudioApp : Application() {
         private set
 
     lateinit var chatRepository: ChatRepository
+        private set
+
+    /** Optional OpenCode Zen cloud models (user's own API key). */
+    lateinit var openCode: OpenCodeRepository
+        private set
+
+    /** Routes "ask the AI" to the selected OpenCode model or the on-device model. */
+    lateinit var ai: AiRouter
         private set
 
     lateinit var webProjectRepository: WebProjectRepository
@@ -113,12 +123,14 @@ class LlamaAiStudioApp : Application() {
         super.onCreate()
         database = AppDatabase.build(this)
         llamaEngine = LlamaEngine(gpuCrashMarker = File(filesDir, "gpu_call_in_progress"))
-        chatRepository = ChatRepository(database.chatDao(), llamaEngine)
-        modelRepository = ModelRepository(this, database.modelDao())
         httpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build()
+        openCode = OpenCodeRepository(this, httpClient)
+        ai = AiRouter(llamaEngine, openCode)
+        chatRepository = ChatRepository(database.chatDao(), ai)
+        modelRepository = ModelRepository(this, database.modelDao())
         hfApi = HfApi.create(httpClient)
         linux = LinuxEnvironment(this, httpClient)
         linuxTerminal = LinuxTerminal(linux)

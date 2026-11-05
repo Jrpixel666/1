@@ -101,6 +101,9 @@ class ImageGenEngine(
         negativePrompt: String,
         outputFile: File,
         params: ImageGenParams = ImageGenParams(),
+        /** img2img starting point: RGB888 pixels sized exactly params.width x params.height. */
+        initImageRgb: ByteArray? = null,
+        strength: Float = 0.6f,
     ): Flow<ImageGenEvent> = callbackFlow {
         val h = handle
         if (h == 0L) {
@@ -139,6 +142,7 @@ class ImageGenEngine(
                 val resultJson = SdNative.generateImage(
                     h, prompt, negativePrompt, params.width, params.height, params.steps,
                     params.cfgScale, seed, outputFile.absolutePath, callback,
+                    initImageRgb, params.width, params.height, strength,
                 )
                 val obj = JSONObject(resultJson)
                 if (obj.has("error")) {

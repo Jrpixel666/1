@@ -1,6 +1,10 @@
 package com.llamaaistudio.app.ui.huggingface
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.text.style.TextOverflow
+import com.llamaaistudio.app.ui.cloud.openCodeModelSection
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,7 +60,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ModelsScreen(app: LlamaAiStudioApp) {
+fun ModelsScreen(app: LlamaAiStudioApp, onOpenSettings: () -> Unit = {}) {
     val viewModel: ModelsViewModel = viewModel(factory = ModelsViewModel.Factory(app))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val installed by viewModel.installedModels.collectAsStateWithLifecycle()
@@ -67,16 +71,53 @@ fun ModelsScreen(app: LlamaAiStudioApp) {
 
     Scaffold { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            ActiveModelBanner(viewModel, engineState, onOpenSettings)
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Discover") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("My Library (${installed.size})") })
             }
 
             if (tab == 0) {
-                DiscoverTab(viewModel, uiState, downloads)
+                DiscoverTab(viewModel, uiState, downloads, onOpenSettings)
             } else {
                 LibraryTab(viewModel, installed, engineState)
             }
+        }
+    }
+}
+
+/** Which model Chat answers with right now, plus the Settings shortcut. */
+@Composable
+private fun ActiveModelBanner(
+    viewModel: ModelsViewModel,
+    engineState: com.llamaaistudio.app.engine.EngineState,
+    onOpenSettings: () -> Unit,
+) {
+    val cloudModel by viewModel.cloudChatModel.collectAsStateWithLifecycle()
+    val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
+    val usingCloud = cloudModel != null && hasKey
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Chat uses", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            Text(
+                when {
+                    usingCloud -> "OpenCode · ${cloudModel!!.name}"
+                    engineState is com.llamaaistudio.app.engine.EngineState.Ready -> "On-device · ${engineState.info.desc}"
+                    else -> "Nothing yet — load a local model or pick an OpenCode one"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        if (usingCloud) {
+            TextButton(onClick = viewModel::useLocalModel) { Text("Use local") }
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(Icons.Filled.Settings, contentDescription = "Settings (OpenCode API key)")
         }
     }
 }
@@ -86,27 +127,17 @@ private fun DiscoverTab(
     viewModel: ModelsViewModel,
     uiState: ModelsUiState,
     downloads: Map<String, com.llamaaistudio.app.data.hf.DownloadState>,
+    onOpenSettings: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = uiState.query,
-                onValueChange = viewModel::onQueryChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Search GGUF models on Hugging Face…") },
-                singleLine = true,
-            )
-            IconButton(onClick = { viewModel.search() }) {
-                Icon(Icons.Filled.Search, contentDescription = "Search", tint = StudioOrange)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
+    val cloud by viewModel.cloud.collectAsStateWithLifecycle()
+    val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
+    val cloudModel by viewModel.cloudChatModel.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(hasKey) {
+        if (hasKey && !cloud.loaded) viewModel.refreshCloudModels()
+    }
 
-        if (uiState.isSearching) {
-            CircularProgressIndicator(modifier = Modifier.padding(16.dp))
-        }
-
-        uiState.expandedDetail?.let { detail ->
+    uiState.expandedDetail?.let { detail ->
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
             ModelDetailPanel(
                 viewModel = viewModel,
                 modelId = detail.id,
@@ -114,17 +145,60 @@ private fun DiscoverTab(
                 downloads = downloads,
                 onClose = viewModel::closeDetail,
             )
-        } ?: run {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(uiState.results, key = { it.id }) { summary ->
-                    ModelSummaryCard(summary) { viewModel.openDetail(summary.id) }
+        }
+        return
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        // 1) On-device models (Hugging Face GGUF)
+        item(key = "local_header") {
+            Column(modifier = Modifier.padding(top = 12.dp)) {
+                Text("On-device models", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+                Text("GGUF models from Hugging Face — run offline on this phone", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            }
+        }
+        item(key = "local_search") {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                OutlinedTextField(
+                    value = uiState.query,
+                    onValueChange = viewModel::onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search GGUF models on Hugging Face…") },
+                    singleLine = true,
+                )
+                IconButton(onClick = { viewModel.search() }) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search", tint = StudioOrange)
                 }
             }
         }
-
-        uiState.error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+        if (uiState.isSearching) {
+            item(key = "local_loading") { CircularProgressIndicator(modifier = Modifier.padding(16.dp)) }
         }
+        uiState.error?.let { e ->
+            item(key = "local_error") { Text(e, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+        }
+        items(uiState.results, key = { "hf_" + it.id }) { summary ->
+            Box(modifier = Modifier.padding(top = 8.dp)) {
+                ModelSummaryCard(summary) { viewModel.openDetail(summary.id) }
+            }
+        }
+
+        // 2) OpenCode free cloud models
+        openCodeModelSection(
+            title = "OpenCode · free models",
+            subtitle = "Cloud models from opencode.ai with your API key — only free ones are shown",
+            hasKey = hasKey,
+            query = cloud.query,
+            onQueryChange = viewModel::onCloudQueryChange,
+            loading = cloud.loading,
+            error = cloud.error,
+            models = cloud.filtered,
+            selectedId = cloudModel?.id,
+            selectLabel = "Use for chat",
+            onSelect = viewModel::useCloudModel,
+            onRefresh = { viewModel.refreshCloudModels(force = true) },
+            onOpenSettings = onOpenSettings,
+        )
     }
 }
 

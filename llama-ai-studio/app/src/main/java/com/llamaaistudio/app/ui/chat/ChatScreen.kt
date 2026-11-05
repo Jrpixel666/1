@@ -101,6 +101,9 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
     }
 
     val currentSession = uiState.currentSession
+    val cloudModel by app.openCode.chatModel.collectAsStateWithLifecycle()
+    val hasCloudKey by app.openCode.hasKey.collectAsStateWithLifecycle()
+    val cloudName = cloudModel?.takeIf { hasCloudKey }?.name
     val streamingHere = uiState.isGenerating && uiState.generatingSessionId == uiState.currentSessionId
 
     Scaffold(
@@ -115,7 +118,7 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        EngineStatusLabel(engineState, uiState.liveGenTps, uiState.isGenerating)
+                        EngineStatusLabel(engineState, uiState.liveGenTps, uiState.isGenerating, cloudName)
                     }
                 },
                 navigationIcon = {
@@ -180,7 +183,7 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
                 text = inputText,
                 onTextChange = { inputText = it },
                 isGenerating = uiState.isGenerating,
-                enabled = engineState is EngineState.Ready && currentSession != null,
+                enabled = (engineState is EngineState.Ready || cloudName != null) && currentSession != null,
                 onSend = {
                     if (inputText.isNotBlank()) {
                         viewModel.sendMessage(inputText)
@@ -192,7 +195,7 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            when (engineState) {
+            if (cloudName == null) when (engineState) {
                 is EngineState.Idle -> NoModelBanner()
                 is EngineState.Loading -> LoadingModelBanner()
                 is EngineState.Error -> ErrorBanner((engineState as EngineState.Error).message)
@@ -291,8 +294,10 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
 }
 
 @Composable
-private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating: Boolean) {
-    val text = when (state) {
+private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating: Boolean, cloudName: String?) {
+    val text = if (cloudName != null) {
+        if (isGenerating) "OpenCode · %.1f tok/s".format(liveTps) else "OpenCode · $cloudName"
+    } else when (state) {
         is EngineState.Idle -> "No model loaded"
         is EngineState.Loading -> "Loading model…"
         is EngineState.Error -> "Model error"
@@ -309,7 +314,7 @@ private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating:
 private fun NoModelBanner() {
     Surface(color = StudioPanelSecondary, modifier = Modifier.fillMaxWidth()) {
         Text(
-            "No model loaded. Open the Models tab to download or import a GGUF model, then load it from there.",
+            "No model yet. In the Models tab, load an on-device GGUF model or pick a free OpenCode model.",
             modifier = Modifier.padding(12.dp),
             style = MaterialTheme.typography.bodyMedium,
         )

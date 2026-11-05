@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "stable-diffusion.h"
 #include "jni_utils.h"
@@ -102,7 +103,7 @@ JNIEXPORT jstring JNICALL
 Java_com_llamaaistudio_imagegen_SdNative_generateImage(
         JNIEnv *env, jobject, jlong handle, jstring jPrompt, jstring jNegativePrompt,
         jint width, jint height, jint steps, jfloat cfgScale, jlong seed, jstring jOutputPath,
-        jobject callback) {
+        jobject callback, jbyteArray jInitRgb, jint initWidth, jint initHeight, jfloat strength) {
 
     auto errorJson = [&](const std::string &reason) {
         std::ostringstream oss;
@@ -138,6 +139,21 @@ Java_com_llamaaistudio_imagegen_SdNative_generateImage(
     params.seed = seed;
     params.sample_params.sample_steps = steps;
     params.sample_params.guidance.txt_cfg = cfgScale;
+
+    // img2img: start from an existing picture (RGB888, already resized to width x height on
+    // the Kotlin side). strength 0..1 = how much the model may change it.
+    std::vector<uint8_t> initPixels;
+    if (jInitRgb != nullptr) {
+        const jsize len = env->GetArrayLength(jInitRgb);
+        if (initWidth != width || initHeight != height || len != (jsize) (initWidth * initHeight * 3)) {
+            sd_set_progress_callback(nullptr, nullptr);
+            return errorJson("init_image_size_mismatch");
+        }
+        initPixels.resize((size_t) len);
+        env->GetByteArrayRegion(jInitRgb, 0, len, reinterpret_cast<jbyte *>(initPixels.data()));
+        params.init_image = sd_image_t{(uint32_t) initWidth, (uint32_t) initHeight, 3, initPixels.data()};
+        params.strength = std::clamp(strength, 0.05f, 1.0f);
+    }
 
     auto t0 = std::chrono::steady_clock::now();
     sd_image_generation_result_t *result = nullptr;

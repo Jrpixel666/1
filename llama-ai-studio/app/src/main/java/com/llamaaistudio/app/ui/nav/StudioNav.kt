@@ -37,6 +37,7 @@ import com.llamaaistudio.app.ui.linux.LinuxScreen
 import com.llamaaistudio.app.ui.image.ImageGenScreen
 import com.llamaaistudio.app.ui.perf.PerformanceScreen
 import com.llamaaistudio.app.ui.sessions.SessionsScreen
+import com.llamaaistudio.app.ui.settings.SettingsScreen
 import com.llamaaistudio.app.ui.webstudio.WebStudioScreen
 
 /** Sessions is reached from Chat's ☰ button, not the bottom bar. */
@@ -44,6 +45,9 @@ const val SESSIONS_ROUTE = "sessions"
 
 /** The Linux terminal is reached from Dev Studio. */
 const val LINUX_ROUTE = "linux"
+
+/** Settings (OpenCode API key) — from the Models screen's ⚙ and the Image assistant. */
+const val SETTINGS_ROUTE = "settings"
 
 enum class StudioDestination(
     val route: String,
@@ -71,7 +75,8 @@ fun StudioBottomBar(navController: NavHostController) {
         StudioDestination.entries.forEach { dest ->
             val selected = currentRoute == dest.route ||
                 (dest == StudioDestination.Chat && currentRoute == SESSIONS_ROUTE) ||
-                (dest == StudioDestination.Dev && currentRoute == LINUX_ROUTE)
+                (dest == StudioDestination.Dev && currentRoute == LINUX_ROUTE) ||
+                (dest == StudioDestination.Models && currentRoute == SETTINGS_ROUTE)
             NavigationBarItem(
                 selected = selected,
                 onClick = { navController.navigateToTab(dest) },
@@ -117,10 +122,17 @@ fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
             })
         }
         composable(StudioDestination.Image.route) {
-            ImageGenScreen(app = app)
+            ImageGenScreen(app = app, onOpenSettings = {
+                navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
+            })
         }
         composable(StudioDestination.Models.route) {
-            ModelsScreen(app = app)
+            ModelsScreen(app = app, onOpenSettings = {
+                navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
+            })
+        }
+        composable(SETTINGS_ROUTE) {
+            SettingsScreen(app = app, onBack = { navController.popBackStack() })
         }
         composable(StudioDestination.Dev.route) {
             DevStudioScreen(app = app, onOpenLinux = {

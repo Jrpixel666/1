@@ -1,6 +1,9 @@
 package com.llamaaistudio.app.ui.image
 
 import android.graphics.BitmapFactory
+import com.llamaaistudio.app.ui.cloud.openCodeModelSection
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -75,7 +78,7 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
-fun ImageGenScreen(app: LlamaAiStudioApp) {
+fun ImageGenScreen(app: LlamaAiStudioApp, onOpenSettings: () -> Unit = {}) {
     val viewModel: ImageGenViewModel = viewModel(factory = ImageGenViewModel.Factory(app))
     var tab by remember { mutableIntStateOf(0) }
 
@@ -88,8 +91,8 @@ fun ImageGenScreen(app: LlamaAiStudioApp) {
             }
             when (tab) {
                 0 -> GenerateTab(viewModel)
-                1 -> GalleryTab(viewModel)
-                else -> ImageModelsTab(viewModel)
+                1 -> GalleryTab(viewModel, onEditStarted = { tab = 0 })
+                else -> ImageModelsTab(viewModel, onOpenSettings)
             }
         }
     }
@@ -141,6 +144,24 @@ private fun GenerateTab(viewModel: ImageGenViewModel) {
             label = { Text("Negative prompt (optional)") },
             modifier = Modifier.fillMaxWidth(),
         )
+        if (viewModel.assistantAvailable) {
+            TextButton(
+                onClick = {
+                    viewModel.improvePrompt(prompt) { suggestion ->
+                        prompt = suggestion.prompt
+                        if (suggestion.negative.isNotBlank()) negativePrompt = suggestion.negative
+                    }
+                },
+                enabled = prompt.isNotBlank() && uiState.assistantStatus == null && !uiState.isGenerating,
+            ) { Text("✨ Improve prompt with AI") }
+        }
+        uiState.assistantStatus?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            }
+        }
 
         LabeledSlider("Steps", params.steps.toFloat(), 1f, 50f) { viewModel.genParams.update { p -> p.copy(steps = it.toInt()) } }
         LabeledSlider("CFG scale", params.cfgScale, 1f, 20f) { viewModel.genParams.update { p -> p.copy(cfgScale = it) } }
@@ -231,8 +252,23 @@ private fun LocalImage(path: String, modifier: Modifier = Modifier, maxDimension
 }
 
 @Composable
-private fun GalleryTab(viewModel: ImageGenViewModel) {
+private fun GalleryTab(viewModel: ImageGenViewModel, onEditStarted: () -> Unit) {
     val images by viewModel.gallery.collectAsStateWithLifecycle()
+    val vision by viewModel.visionModel.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<GeneratedImageEntity?>(null) }
+
+    editing?.let { image ->
+        EditImageDialog(
+            image = image,
+            assistantName = vision?.name,
+            onEdit = { instruction, strength ->
+                editing = null
+                viewModel.editImage(image, instruction, strength)
+                onEditStarted()
+            },
+            onDismiss = { editing = null },
+        )
+    }
 
     if (images.isEmpty()) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -248,13 +284,13 @@ private fun GalleryTab(viewModel: ImageGenViewModel) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(images, key = { it.id }) { image ->
-            GalleryItem(image = image, onDelete = { viewModel.deleteFromGallery(image) })
+            GalleryItem(image = image, onEdit = { editing = image }, onDelete = { viewModel.deleteFromGallery(image) })
         }
     }
 }
 
 @Composable
-private fun GalleryItem(image: GeneratedImageEntity, onDelete: () -> Unit) {
+private fun GalleryItem(image: GeneratedImageEntity, onEdit: () -> Unit, onDelete: () -> Unit) {
     Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
         Column(modifier = Modifier.padding(6.dp)) {
             LocalImage(
@@ -265,7 +301,8 @@ private fun GalleryItem(image: GeneratedImageEntity, onDelete: () -> Unit) {
                     .padding(bottom = 4.dp),
             )
             Text(image.prompt, style = MaterialTheme.typography.labelSmall, maxLines = 2)
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onEdit) { Text("Edit") }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = StudioTextMuted)
@@ -276,59 +313,124 @@ private fun GalleryItem(image: GeneratedImageEntity, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun ImageModelsTab(viewModel: ImageGenViewModel) {
+private fun EditImageDialog(
+    image: GeneratedImageEntity,
+    assistantName: String?,
+    onEdit: (String, Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var instruction by remember { mutableStateOf("") }
+    var strength by remember { mutableFloatStateOf(0.55f) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit image") },
+        text = {
+            Column {
+                LocalImage(
+                    image.filePath,
+                    maxDimension = 384,
+                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = instruction,
+                    onValueChange = { instruction = it },
+                    label = { Text("What should change?") },
+                    placeholder = { Text("e.g. make it night time with neon lights") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("Change amount: ${(strength * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                Slider(value = strength, onValueChange = { strength = it }, valueRange = 0.2f..0.9f)
+                Text(
+                    if (assistantName != null) "$assistantName looks at the picture and writes the new prompt; " +
+                        "the on-device model redraws it from the original."
+                    else "The on-device model redraws it from the original using your words. Pick an Image " +
+                        "assistant in Models for smarter edits.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StudioTextMuted,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onEdit(instruction, strength) }, enabled = instruction.isNotBlank()) { Text("Edit") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ImageModelsTab(viewModel: ImageGenViewModel, onOpenSettings: () -> Unit) {
     val installed by viewModel.installedModels.collectAsStateWithLifecycle()
     val uiState by viewModel.modelsUiState.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val engineState by viewModel.engineState.collectAsStateWithLifecycle()
+    val cloud by viewModel.cloud.collectAsStateWithLifecycle()
+    val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
+    val vision by viewModel.visionModel.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(hasKey) {
+        if (hasKey && !cloud.loaded) viewModel.refreshVisionModels()
+    }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = uiState.query,
-                onValueChange = viewModel::onQueryChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Search e.g. \"sdxl-turbo gguf\"…") },
-                singleLine = true,
-            )
-            IconButton(onClick = { viewModel.search() }) {
-                Icon(Icons.Filled.Search, contentDescription = "Search", tint = StudioOrange)
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        // 1) On-device diffusion models (Hugging Face)
+        item(key = "local_header") {
+            Column(modifier = Modifier.padding(top = 12.dp)) {
+                Text("On-device image models", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+                Text("Stable Diffusion GGUF checkpoints — generate and edit offline", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
             }
         }
-        Spacer(Modifier.height(8.dp))
-
-        Text("Installed", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
-        installed.forEach { model ->
-            val isActive = (engineState as? ImageEngineState.Ready)?.modelPath == model.filePath
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(model.displayName)
-                    Text(
-                        "${model.quantization ?: "?"} · ${formatBytes(model.sizeBytes)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = StudioTextMuted,
-                    )
+        item(key = "local_search") {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                OutlinedTextField(
+                    value = uiState.query,
+                    onValueChange = viewModel::onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search e.g. \"sdxl-turbo gguf\"…") },
+                    singleLine = true,
+                )
+                IconButton(onClick = { viewModel.search() }) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search", tint = StudioOrange)
                 }
-                Button(onClick = { viewModel.loadModel(model) }, enabled = !isActive) {
-                    Text(if (isActive) "Loaded" else "Load")
-                }
-                TextButton(onClick = { viewModel.deleteModel(model) }) { Text("Delete") }
             }
         }
-
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-        uiState.expandedDetail?.let { detail ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(detail.id, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = { viewModel.closeDetail() }) { Text("Back") }
+        if (installed.isNotEmpty()) {
+            item(key = "installed_header") {
+                Text("Installed", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
             }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(viewModel.filesFor(detail), key = { it.filename }) { file ->
+            items(installed, key = { "inst_" + it.filePath }) { model ->
+                val isActive = (engineState as? ImageEngineState.Ready)?.modelPath == model.filePath
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(model.displayName)
+                        Text(
+                            "${model.quantization ?: "?"} · ${formatBytes(model.sizeBytes)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioTextMuted,
+                        )
+                    }
+                    Button(onClick = { viewModel.loadModel(model) }, enabled = !isActive) {
+                        Text(if (isActive) "Loaded" else "Load")
+                    }
+                    TextButton(onClick = { viewModel.deleteModel(model) }) { Text("Delete") }
+                }
+            }
+        }
+        val detail = uiState.expandedDetail
+        if (detail != null) {
+            item(key = "detail_header") {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(detail.id, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { viewModel.closeDetail() }) { Text("Back") }
+                }
+            }
+            items(viewModel.filesFor(detail), key = { "file_" + it.filename }) { file ->
+                Box(modifier = Modifier.padding(top = 8.dp)) {
                     ImageGgufFileCard(
                         file = file,
                         download = downloads["${file.modelId}/${file.filename}"],
@@ -340,22 +442,37 @@ private fun ImageModelsTab(viewModel: ImageGenViewModel) {
                     )
                 }
             }
-        } ?: run {
-            Text("Discover", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(uiState.results, key = { it.id }) { summary ->
-                    Card(
-                        onClick = { viewModel.openDetail(summary.id) },
-                        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(summary.id, modifier = Modifier.padding(10.dp))
-                    }
+        } else {
+            items(uiState.results, key = { "hf_" + it.id }) { summary ->
+                Card(
+                    onClick = { viewModel.openDetail(summary.id) },
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Text(summary.id, modifier = Modifier.padding(10.dp))
                 }
             }
         }
+        uiState.error?.let { e -> item(key = "local_error") { Text(e, color = MaterialTheme.colorScheme.error) } }
 
-        uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        // 2) OpenCode: free models that can *see* images (Zen has no image-generation models)
+        openCodeModelSection(
+            title = "OpenCode · free image assistants",
+            subtitle = "Free models that understand images — they write prompts and plan edits; " +
+                "the on-device model draws. (OpenCode has no image-generating models.)",
+            hasKey = hasKey,
+            query = cloud.query,
+            onQueryChange = viewModel::onCloudQueryChange,
+            loading = cloud.loading,
+            error = cloud.error,
+            models = cloud.filtered,
+            selectedId = vision?.id,
+            selectLabel = "Use",
+            onSelect = viewModel::useVisionModel,
+            onRefresh = { viewModel.refreshVisionModels(force = true) },
+            onOpenSettings = onOpenSettings,
+            emptyText = "No free image-capable models right now.",
+        )
     }
 }
 

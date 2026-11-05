@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.llamaaistudio.app.LlamaAiStudioApp
+import com.llamaaistudio.app.data.cloud.CloudModel
 import com.llamaaistudio.app.data.db.LocalModelEntity
 import com.llamaaistudio.app.data.hf.GgufFileOption
 import com.llamaaistudio.app.data.hf.HfModelDetail
@@ -25,6 +26,19 @@ data class ModelsUiState(
     val error: String? = null,
 )
 
+data class CloudUiState(
+    val query: String = "",
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val models: List<CloudModel> = emptyList(),
+    val error: String? = null,
+) {
+    val filtered: List<CloudModel>
+        get() = if (query.isBlank()) models else models.filter {
+            it.name.contains(query, true) || it.id.contains(query, true) || it.description.contains(query, true)
+        }
+}
+
 class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ModelsUiState())
@@ -38,6 +52,39 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             emptyList(),
         )
     val engineState = app.llamaEngine.state
+
+    // --- OpenCode (free cloud models) ------------------------------------------------------
+
+    val openCodeHasKey = app.openCode.hasKey
+    val cloudChatModel = app.openCode.chatModel
+
+    private val _cloud = MutableStateFlow(CloudUiState())
+    val cloud: StateFlow<CloudUiState> = _cloud
+
+    fun onCloudQueryChange(q: String) {
+        _cloud.value = _cloud.value.copy(query = q)
+    }
+
+    /** Loads OpenCode's catalogue and keeps only the free, chat-capable models. */
+    fun refreshCloudModels(force: Boolean = false) {
+        if (_cloud.value.loading) return
+        viewModelScope.launch {
+            _cloud.value = _cloud.value.copy(loading = true, error = null)
+            val result = runCatching { app.openCode.freeModels(force = force) }
+            _cloud.value = _cloud.value.copy(
+                loading = false,
+                models = result.getOrDefault(_cloud.value.models),
+                loaded = result.isSuccess || _cloud.value.loaded,
+                error = result.exceptionOrNull()?.let { "Couldn't load OpenCode models: ${it.message}" },
+            )
+        }
+    }
+
+    /** Chat (and Web/Dev Studio's AI builders) will use this OpenCode model. */
+    fun useCloudModel(model: CloudModel) = app.openCode.selectChatModel(model)
+
+    /** Back to the on-device model for Chat. */
+    fun useLocalModel() = app.openCode.selectChatModel(null)
 
     fun onQueryChange(query: String) {
         _uiState.value = _uiState.value.copy(query = query)

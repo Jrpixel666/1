@@ -339,9 +339,16 @@ private fun BuildCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) 
             Button(onClick = { viewModel.generateWithAi(idea) }, enabled = idea.isNotBlank()) { Text("Build it") }
             if (!viewModel.modelLoaded) {
                 Text(
-                    "No model loaded — load one in Models first. Coding models (e.g. Qwen2.5-Coder) do best.",
+                    "No model yet — in Models, load a local GGUF or pick a free OpenCode model (coding models do best).",
                     style = MaterialTheme.typography.labelSmall,
                     color = StudioError,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            } else {
+                Text(
+                    "Uses ${viewModel.aiSourceLabel}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StudioTextMuted,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }

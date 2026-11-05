@@ -63,7 +63,9 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val _uiState = MutableStateFlow(WebStudioUiState())
     val uiState: StateFlow<WebStudioUiState> = _uiState
 
-    val modelLoaded: Boolean get() = app.llamaEngine.isLoaded
+    /** A model to build with: the selected OpenCode model, or a loaded on-device model. */
+    val modelLoaded: Boolean get() = app.ai.isAvailable
+    val aiSourceLabel: String get() = app.ai.sourceLabel
 
     private val probeClient = app.httpClient.newBuilder()
         .connectTimeout(800, TimeUnit.MILLISECONDS)
@@ -185,8 +187,8 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     fun generateWithAi(idea: String) {
         val project = _uiState.value.selectedProject ?: return
         if (idea.isBlank() || _uiState.value.isGenerating) return
-        if (!app.llamaEngine.isLoaded) {
-            _uiState.update { it.copy(status = "Load a model in the Models tab first (a coding model works best)") }
+        if (!app.ai.isAvailable) {
+            _uiState.update { it.copy(status = "Pick a model in the Models tab first — a local GGUF or a free OpenCode model") }
             return
         }
         genJob = viewModelScope.launch {
@@ -202,7 +204,7 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             var failure: String? = null
             var tokens = 0
             val start = System.currentTimeMillis()
-            app.llamaEngine.generate(turns, GenerationParams(maxTokens = WEB_GEN_MAX_TOKENS, temperature = 0.2f))
+            app.ai.generate(turns, GenerationParams(maxTokens = WEB_GEN_MAX_TOKENS, temperature = 0.2f))
                 .collect { event ->
                     when (event) {
                         is GenerationEvent.Token -> {

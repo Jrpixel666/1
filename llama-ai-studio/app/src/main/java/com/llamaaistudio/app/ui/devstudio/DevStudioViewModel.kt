@@ -197,8 +197,8 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     fun generateWithAi(idea: String) {
         val project = _uiState.value.selectedProject ?: return
         if (idea.isBlank() || _uiState.value.isGeneratingCode) return
-        if (!app.llamaEngine.isLoaded) {
-            _uiState.value = _uiState.value.copy(status = "Load a model in the Chat or Models tab first")
+        if (!app.ai.isAvailable) {
+            _uiState.value = _uiState.value.copy(status = "Pick a model in the Models tab first — a local GGUF or a free OpenCode model")
             return
         }
         codeGenJob = viewModelScope.launch {
@@ -235,7 +235,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             var failure: String? = null
             var tokenCount = 0
             val startTime = System.currentTimeMillis()
-            app.llamaEngine.generate(turns, GenerationParams(maxTokens = CODE_GEN_MAX_TOKENS, temperature = 0.2f))
+            app.ai.generate(turns, GenerationParams(maxTokens = CODE_GEN_MAX_TOKENS, temperature = 0.2f))
                 .collect { event ->
                     when (event) {
                         is GenerationEvent.Token -> {

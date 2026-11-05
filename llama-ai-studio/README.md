@@ -192,6 +192,24 @@ verified only by running it there.
 A foreground service (`BackgroundWorkService`) keeps servers, builds and installs running
 while you switch apps, with a **Stop all** action in its notification.
 
+## OpenCode (optional cloud models)
+
+**Models → ⚙ Settings** takes an [OpenCode Zen](https://opencode.ai/docs/zen) API key. It is
+encrypted with an Android Keystore AES-GCM key (`data/cloud/SecureKeyStore.kt`) and only sent
+to opencode.ai. The catalogue comes from `https://opencode.ai/zen/v1/models`; the app shows
+**only free models** (every listed price is 0) that offer an OpenAI-compatible
+`chat-completions` endpoint, and streams replies from it.
+
+- **Models → Discover** has two searches: on-device GGUF models (Hugging Face) and free
+  OpenCode models. **Use for chat** routes Chat — and Web/Dev Studio's "build with AI" — to
+  that model (`engine/AiRouter.kt`); **Use local** switches back.
+- **Image → Models** also has two searches: on-device Stable Diffusion checkpoints and free
+  OpenCode models that **accept images**. OpenCode Zen has no image-*generating* models (all
+  80 listed models output text), so the chosen one is an *image assistant*: **✨ Improve
+  prompt** rewrites your idea into a detailed prompt, and **Gallery → Edit** sends the picture
+  plus your instruction to it, gets back a new prompt, and the on-device model redraws the
+  image from the original (**img2img**, `init_image` + strength in `sd_bridge.cpp`).
+
 ## Database migrations
 
 - v3 (`MIGRATION_2_3`): `chat_sessions.pinned` for Sessions.

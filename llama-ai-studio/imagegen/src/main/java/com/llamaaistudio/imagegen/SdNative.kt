@@ -39,6 +39,12 @@ object SdNative {
         seed: Long,
         outputPath: String,
         callback: ProgressCallback,
+        /** img2img: RGB888 pixels of the starting image (width x height), or null for txt2img. */
+        initRgb: ByteArray?,
+        initWidth: Int,
+        initHeight: Int,
+        /** img2img: 0..1, how much the image may change. */
+        strength: Float,
     ): String
 
     external fun cancelGeneration(handle: Long)
