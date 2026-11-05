@@ -146,7 +146,9 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                     if (code == 0) recordBuild(project.id, android)
                     setStatus(
                         when {
-                            code != 0 -> "Build failed (exit $code) — the log shows why. The first build also downloads Gradle and dependencies, so check your connection."
+                            code != 0 -> gradleFailureReason(app.buildJob.log.value)
+                                ?.let { "Build failed: $it" }
+                                ?: "Build failed (exit $code) — the log shows why. The first build also downloads Gradle and dependencies, so check your connection."
                             android && repo.builtApk(project).isFile -> "Built ${repo.builtApk(project).name} — tap Install APK."
                             android -> "Build finished but no APK was found."
                             else -> "Program finished — output is in the log."
@@ -158,6 +160,17 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun stopBuild() = app.buildJob.stop()
+
+    /** Gradle's "* What went wrong:" section (plus any Kotlin/AAPT error lines), condensed. */
+    private fun gradleFailureReason(log: List<String>): String? {
+        val start = log.indexOfFirst { it.trim() == "* What went wrong:" }
+        val section = if (start >= 0) {
+            log.drop(start + 1).takeWhile { !it.trim().startsWith("* Try:") }
+        } else emptyList()
+        val compilerErrors = log.filter { it.startsWith("e: ") || it.contains("error:", ignoreCase = false) }.take(5)
+        val text = (section + compilerErrors).map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n")
+        return text.takeIf { it.isNotBlank() }?.take(1500)
+    }
 
     // --- build ETA: learned from this project's last successful build ------------------------
 
