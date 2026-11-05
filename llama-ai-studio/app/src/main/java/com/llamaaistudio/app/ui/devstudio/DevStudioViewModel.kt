@@ -205,6 +205,76 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         }
     }
 
+    // --- GitHub builds -------------------------------------------------------------------------
+
+    private val ghPrefs = app.getSharedPreferences("github_builds", android.content.Context.MODE_PRIVATE)
+    private val _useGitHub = MutableStateFlow(ghPrefs.getBoolean("use", false))
+    /** Compile on GitHub Actions instead of the phone (Build button and Project Builder). */
+    val useGitHub: StateFlow<Boolean> = _useGitHub
+    val gitHubToken: StateFlow<String?> get() { app.gitHubBuilds; return app.gitHubToken }
+    private val _gitHub = MutableStateFlow<String?>(null)
+    /** Progress / result of the last GitHub build. */
+    val gitHubStatus: StateFlow<String?> = _gitHub
+    private val _gitHubBusy = MutableStateFlow(false)
+    val gitHubBusy: StateFlow<Boolean> = _gitHubBusy
+    private var gitHubJob: kotlinx.coroutines.Job? = null
+
+    fun setUseGitHub(on: Boolean) { _useGitHub.value = on; ghPrefs.edit().putBoolean("use", on).apply() }
+
+    fun saveGitHubToken(token: String) {
+        val t = token.trim()
+        app.gitHubBuilds
+        if (t.isEmpty()) { app.gitHubKeys.remove("github_token"); app.gitHubToken.value = null; return }
+        app.gitHubKeys.put("github_token", t)
+        app.gitHubToken.value = t
+        viewModelScope.launch {
+            _gitHub.value = runCatching { "Connected as ${app.gitHubBuilds.login()}" }.getOrElse { "Token check failed: ${it.message}" }
+        }
+    }
+
+    private fun gitHubRunner(project: DevProjectEntity): ProjectBuildRunner = object : ProjectBuildRunner {
+        override suspend fun build(onLog: (String) -> Unit): ProjectBuildRunner.Outcome {
+            repo.ensureBuildFiles(project)
+            var last: String? = null
+            val r = try {
+                app.gitHubBuilds.build(File(project.rootPath), com.llamaaistudio.app.data.cloud.GitHubBuilds.repoName(project.name), repo.builtApk(project)) {
+                    _gitHub.value = it
+                    if (it != last) { last = it; onLog(it) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                val msg = e.message ?: e.toString()
+                _gitHub.value = msg
+                return ProjectBuildRunner.Outcome(false, listOf("GitHub: $msg"), null)
+            }
+            r.runUrl?.let { onLog("Run: $it") }
+            if (r.success) recordBuild(project.id, true)
+            _gitHub.value = if (r.success) "Built on GitHub — tap Install APK." else "GitHub build failed" + (r.runUrl?.let { " — $it" } ?: "")
+            return ProjectBuildRunner.Outcome(r.success, r.log, r.apk)
+        }
+    }
+
+    /** One-off GitHub build (no AI fixing) from the Build card. */
+    fun buildOnGitHub() {
+        val project = _uiState.value.selectedProject ?: return
+        if (_gitHubBusy.value) return
+        if (app.gitHubToken.value == null) { _gitHub.value = "Add a GitHub token first"; return }
+        gitHubJob = viewModelScope.launch {
+            _gitHubBusy.value = true
+            try {
+                val o = gitHubRunner(project).build { }
+                if (!o.success) {
+                    val errs = ProjectBuilder.parseErrors(o.log)
+                    if (errs.isNotEmpty()) _gitHub.value = (_gitHub.value ?: "") + "\n" +
+                        errs.flatMap { (f, e) -> e.map { "${f.substringAfterLast('/')}: $it" } }.take(8).joinToString("\n")
+                }
+            } finally { _gitHubBusy.value = false }
+        }
+    }
+
+    fun stopGitHubBuild() { gitHubJob?.cancel(); _gitHubBusy.value = false; _gitHub.value = "Stopped (GitHub may finish the run anyway)" }
+
+    private fun runnerFor(project: DevProjectEntity) = if (_useGitHub.value) gitHubRunner(project) else gradleRunner(project)
+
     private fun builderReady(project: DevProjectEntity): Boolean = when {
         !repo.isAndroidApp(project) -> { setStatus("Project Builder makes Android apps — create an Android project."); false }
         !app.ai.isAvailable -> { setStatus("Pick a model first — OpenCode is best for big projects."); false }
@@ -222,8 +292,10 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     fun buildPlannedProject() {
         val project = _uiState.value.selectedProject ?: return
         if (!builderReady(project)) return
-        if (!_toolchainReady.value) { setStatus("Install the build tools first."); return }
-        app.projectBuilder.buildAll(File(project.rootPath), pkgOf(project), codeAi(), gradleRunner(project))
+        if (_useGitHub.value) {
+            if (app.gitHubToken.value == null) { setStatus("Add a GitHub token in the GitHub card first."); return }
+        } else if (!_toolchainReady.value) { setStatus("Install the build tools first — or turn on Build on GitHub."); return }
+        app.projectBuilder.buildAll(File(project.rootPath), pkgOf(project), codeAi(), runnerFor(project))
     }
 
     fun stopProjectBuilder() { app.projectBuilder.stop(); app.buildJob.stop() }

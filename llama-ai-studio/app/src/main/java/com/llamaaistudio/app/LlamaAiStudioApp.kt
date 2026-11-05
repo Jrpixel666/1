@@ -118,6 +118,17 @@ class LlamaAiStudioApp : Application() {
     /** Dev Studio's Project Builder (plan → write files → build → auto-fix); app-scoped. */
     val projectBuilder by lazy { com.llamaaistudio.app.ui.devstudio.ProjectBuilder() }
 
+    /** GitHub token (encrypted) for compiling Dev Studio projects on GitHub Actions. */
+    val gitHubKeys by lazy { com.llamaaistudio.app.data.cloud.SecureKeyStore(this) }
+    val gitHubToken = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val gitHubBuilds by lazy {
+        gitHubToken.value = gitHubKeys.get("github_token")
+        com.llamaaistudio.app.data.cloud.GitHubBuilds(
+            httpClient.newBuilder().readTimeout(120, TimeUnit.SECONDS).build(),
+            { gitHubToken.value },
+        )
+    }
+
     /** Web Studio's built-in server; app-scoped so it keeps running across screens. */
     val webServer = LocalWebServer()
 

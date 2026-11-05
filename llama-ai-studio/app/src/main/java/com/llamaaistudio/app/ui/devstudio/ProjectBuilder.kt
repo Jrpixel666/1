@@ -138,7 +138,7 @@ class ProjectBuilder(
         for (round in 0..maxFixRounds) {
             _state.update { it.copy(phase = Phase.BUILDING, round = round) }
             log(if (round == 0) "Building with Gradle…" else "Rebuilding (fix round $round/$maxFixRounds)…")
-            val outcome = runner.build { }
+            val outcome = runner.build { log(it) }
             if (outcome.success) {
                 log("Build succeeded")
                 _state.update { it.copy(phase = Phase.DONE, apk = outcome.apk, lastErrors = emptyList(), message = "Built ${outcome.apk?.name ?: "the app"} — tap Install APK.") }

@@ -195,6 +195,8 @@ private fun ProjectDetailScreen(
             AiBuilderCard(viewModel, uiState)
 
             Spacer(Modifier.height(16.dp))
+            GitHubBuildCard(viewModel)
+            Spacer(Modifier.height(12.dp))
             BuildCard(viewModel, project.id, onOpenLinux)
 
             uiState.status?.let {
@@ -583,6 +585,64 @@ private fun ProjectBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudio
             if (st.activity.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 st.activity.takeLast(6).forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = StudioTextMuted) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GitHubBuildCard(viewModel: DevStudioViewModel) {
+    val token by viewModel.gitHubToken.collectAsStateWithLifecycle()
+    val use by viewModel.useGitHub.collectAsStateWithLifecycle()
+    val status by viewModel.gitHubStatus.collectAsStateWithLifecycle()
+    val busy by viewModel.gitHubBusy.collectAsStateWithLifecycle()
+    var entry by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf(false) }
+    if (!viewModel.isAndroidProject()) return
+    Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Build on GitHub", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+                    Text(
+                        "Compile on GitHub Actions instead of the phone — no build tools needed, faster, no battery drain. " +
+                            "Pushes the project to a private repo in your account.",
+                        style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+                    )
+                }
+                androidx.compose.material3.Switch(checked = use, onCheckedChange = { viewModel.setUseGitHub(it) })
+            }
+            if (token == null || editing) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "GitHub token: github.com → Settings → Developer settings → Personal access tokens. " +
+                        "Classic token with \"repo\" and \"workflow\" scopes.",
+                    style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+                )
+                OutlinedTextField(
+                    value = entry, onValueChange = { entry = it }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("ghp_…") }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { viewModel.saveGitHubToken(entry); entry = ""; editing = false }, enabled = entry.isNotBlank()) { Text("Save token") }
+                    if (token != null) TextButton(onClick = { editing = false }) { Text("Cancel") }
+                }
+            } else if (use) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (busy) OutlinedButton(onClick = { viewModel.stopGitHubBuild() }) { Text("Stop") }
+                    else Button(onClick = { viewModel.buildOnGitHub() }) { Text("Build on GitHub") }
+                    TextButton(onClick = { editing = true }) { Text("Change token") }
+                }
+                Text("Project Builder also uses GitHub while this is on.", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            } else {
+                TextButton(onClick = { editing = true }) { Text("Change token") }
+            }
+            if (busy) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+            status?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = if (it.contains("line ")) FontFamily.Monospace else null) }
+            if (status?.startsWith("Built on GitHub") == true) {
+                Button(onClick = { viewModel.installApk() }) { Text("Install APK") }
             }
         }
     }
