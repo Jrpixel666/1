@@ -106,8 +106,21 @@ class DevProjectRepository(
         val appBuild = File(root, "app/build.gradle.kts")
         if (isAndroidApp(project) && appBuild.isFile) {
             val text = appBuild.readText()
-            if (!text.contains("jvmTarget") && text.contains("compileOptions")) {
-                appBuild.writeText(text.trimEnd().removeSuffix("}").trimEnd() + "\n    kotlinOptions {\n        jvmTarget = \"17\"\n    }\n}\n")
+            var updated = text
+            if (!updated.contains("jvmTarget") && updated.contains("compileOptions")) {
+                updated = updated.trimEnd().removeSuffix("}").trimEnd() + "\n    kotlinOptions {\n        jvmTarget = \"17\"\n    }\n}\n"
+            }
+            // Older scaffolds had no dependencies; AI-written code usually needs AppCompat etc.
+            if (!updated.contains("dependencies {")) {
+                updated = updated.trimEnd() + "\n\n" + ProjectTemplates.ANDROID_DEPENDENCIES + "\n"
+            }
+            if (updated != text) appBuild.writeText(updated)
+            // AppCompatActivity crashes at launch without an AppCompat theme.
+            val manifest = File(root, "app/src/main/AndroidManifest.xml")
+            if (manifest.isFile) {
+                val m = manifest.readText()
+                val fixed = m.replace("@android:style/Theme.Material.Light.NoActionBar", "@style/Theme.AppCompat.DayNight.NoActionBar")
+                if (fixed != m) manifest.writeText(fixed)
             }
         }
     }

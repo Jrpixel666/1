@@ -10,6 +10,17 @@ object ProjectTemplates {
     const val KOTLIN_VERSION = "2.0.21"
     const val GRADLE_VERSION = "8.14.3"
 
+    /**
+     * Libraries every Android project gets, so typical AI-written code (AppCompatActivity,
+     * Material buttons, ConstraintLayout) compiles without the user editing Gradle files.
+     */
+    const val ANDROID_DEPENDENCIES = """dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+}"""
+
     /** A valid Kotlin package / applicationId segment for [name] ('-' and leading digits aren't). */
     fun packageSegment(name: String): String =
         name.lowercase().replace(Regex("[^a-z0-9_]"), "_").ifEmpty { "app" }
@@ -60,7 +71,7 @@ object ProjectTemplates {
                     jvmTarget = "17"
                 }
             }
-        """.trimIndent() + "\n",
+        """.trimIndent() + "\n\n" + ANDROID_DEPENDENCIES + "\n",
         "app/src/main/java/com/example/$pkg/MainActivity.kt" to """
             package com.example.$pkg
 
@@ -85,7 +96,7 @@ object ProjectTemplates {
             <manifest xmlns:android="http://schemas.android.com/apk/res/android">
                 <application
                     android:label="$name"
-                    android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                    android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
                     <activity android:name=".MainActivity" android:exported="true">
                         <intent-filter>
                             <action android:name="android.intent.action.MAIN" />

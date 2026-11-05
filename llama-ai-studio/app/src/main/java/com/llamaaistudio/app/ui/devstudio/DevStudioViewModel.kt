@@ -267,7 +267,12 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                     "system",
                     "You are an expert Kotlin/Android developer. The user describes a feature or " +
                         "change. Rewrite the ENTIRE file below to implement it, keeping it " +
-                        "compilable. Output ONLY the complete raw source code for the file — no " +
+                        "compilable. Project facts you must respect: it is a single-file app — build the " +
+                        "whole UI in Kotlin code (e.g. LinearLayout, TextView, Button created in onCreate) and " +
+                        "NEVER use R.layout, findViewById or XML resources, because no layout files exist. " +
+                        "Available libraries: androidx.appcompat (AppCompatActivity), androidx.core, " +
+                        "com.google.android.material, androidx.constraintlayout — nothing else (no Compose). " +
+                        "Keep the same package name. Output ONLY the complete raw source code for the file — no " +
                         "explanations, no markdown code fences, no commentary before or after.",
                 ),
                 ChatTurn(
