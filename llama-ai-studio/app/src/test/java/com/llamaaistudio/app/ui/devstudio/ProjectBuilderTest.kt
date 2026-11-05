@@ -133,4 +133,51 @@ class ProjectBuilderTest {
         assertEquals(3, runner.builds) // initial + 2 fix rounds
         assertTrue(end.lastErrors.isNotEmpty())
     }
+
+    @Test
+    fun parsesManifestAndGradleScriptErrors() {
+        val log = listOf(
+            "/projects/apps/x/app/src/main/AndroidManifest.xml:12:9-40 Error:",
+            "/projects/apps/x/app/src/main/AndroidManifest.xml:14:5-30 Error: Attribute application@icon value=(@mipmap/ic) is missing",
+            "e: file:///projects/apps/x/app/build.gradle.kts:20:5: Unresolved reference: composeOptions",
+        )
+        val e = ProjectBuilder.parseErrors(log)
+        assertTrue(e.getValue("app/src/main/AndroidManifest.xml").any { it.contains("is missing") })
+        assertTrue(e.containsKey("app/build.gradle.kts"))
+    }
+
+    @Test
+    fun planMayIncludeAppBuildFileFirst() {
+        val plan = ProjectBuilder.parsePlan("""{"files":[{"path":"app/src/main/java/a/Main.kt","purpose":"x"},{"path":"app/build.gradle.kts","purpose":"compose deps"},{"path":"settings.gradle.kts","purpose":"no"}]}""", "a")
+        assertEquals(listOf("app/build.gradle.kts", "app/src/main/java/a/Main.kt"), plan.map { it.path })
+    }
+
+    /** Gradle-level failure with no file:line → model gets "What went wrong" and rewrites files. */
+    @Test
+    fun fixesProjectLevelFailures() = runBlocking {
+        val root = tmp.newFolder("p")
+        val builder = ProjectBuilder(CoroutineScope(Dispatchers.Default))
+        val build = File(root, "app/build.gradle.kts")
+        val ai = object : CodeAi {
+            override val label = "f"; override val largeContext = true
+            var sawSummary = false
+            override suspend fun complete(system: String, user: String, maxTokens: Int) = Result.success(when {
+                user.startsWith("App to build:") -> """{"files":[{"path":"app/build.gradle.kts","purpose":"deps"}]}"""
+                user.startsWith("The Gradle build failed") -> { sawSummary = user.contains("Could not find androidx.foo:bar"); "=== FILE: app/build.gradle.kts ===\nplugins { }\n// good\n" }
+                else -> "plugins { }\n// bad\n"
+            })
+        }
+        val runner = object : ProjectBuildRunner {
+            override suspend fun build(onLog: (String) -> Unit) = if (build.readText().contains("bad"))
+                ProjectBuildRunner.Outcome(false, listOf("FAILURE: Build failed with an exception.", "* What went wrong:", "Could not resolve all files.", "   > Could not find androidx.foo:bar:1.0.", "* Try:", "> Run with --stacktrace"), null)
+            else ProjectBuildRunner.Outcome(true, emptyList(), null)
+        }
+        builder.plan(1, root, "p", "x", ai)
+        withTimeout(5000) { builder.state.first { it.phase == ProjectBuilder.Phase.PLANNED } }
+        builder.buildAll(root, "p", ai, runner)
+        val end = withTimeout(5000) { builder.state.first { it.phase == ProjectBuilder.Phase.DONE || it.phase == ProjectBuilder.Phase.FAILED } }
+        assertEquals(ProjectBuilder.Phase.DONE, end.phase)
+        assertTrue(ai.sawSummary)
+        assertTrue(build.readText().contains("good"))
+    }
 }

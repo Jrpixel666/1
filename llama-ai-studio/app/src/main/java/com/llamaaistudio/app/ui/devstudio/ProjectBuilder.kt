@@ -145,13 +145,33 @@ class ProjectBuilder(
                 return
             }
             val errors = parseErrors(outcome.log)
-            _state.update { it.copy(lastErrors = errors.flatMap { (f, e) -> e.map { "$f: $it" } }.ifEmpty { tail(outcome.log) }) }
+            _state.update { it.copy(lastErrors = errors.flatMap { (f, e) -> e.map { "$f: $it" } }.ifEmpty { whatWentWrong(outcome.log).ifEmpty { tail(outcome.log) } }) }
             if (round == maxFixRounds) break
-            if (errors.isEmpty()) {
-                log("Build failed without file-specific errors — can't auto-fix (see log).")
-                break
-            }
             _state.update { it.copy(phase = Phase.FIXING) }
+            if (errors.isEmpty()) {
+                // Gradle-level failure (dependency, manifest merge, plugin…): give the model the
+                // whole summary plus every file and let it rewrite whichever files it needs.
+                val summary = whatWentWrong(outcome.log)
+                if (summary.isEmpty()) { log("Build failed with no readable error — see the build log."); break }
+                log("Fixing a project-level error…")
+                val reply = ai.complete(
+                    fileSystem(pkg).replace("Output ONLY the complete contents of the requested file — no explanations, no markdown fences.",
+                        "Output each file you change as \"=== FILE: relative/path ===\" followed by its complete contents. No explanations."),
+                    "The Gradle build failed:\n${summary.joinToString("\n")}\n\nProject files:\n" +
+                        contextFiles(root, exclude = "", budget = if (ai.largeContext) 60_000 else 6_000) +
+                        "\n\nRewrite the files needed to fix it (app/build.gradle.kts may be changed to fix dependencies).",
+                    if (ai.largeContext) 8000 else 2000,
+                )
+                val files = reply.getOrNull()?.let { WebCodeGen.parse(it, "app/build.gradle.kts") }.orEmpty()
+                    .filter { ALLOWED_PREFIX.containsMatchIn(it.path) }
+                if (files.isEmpty()) { log("  fix failed: ${reply.exceptionOrNull()?.message ?: "no files in reply"}"); continue }
+                for (g in files) {
+                    val f = WebCodeGen.resolveInside(root, g.path) ?: continue
+                    log("  rewrote ${g.path}")
+                    withContext(Dispatchers.IO) { f.parentFile?.mkdirs(); f.writeText(cleanFile(g.content, g.path)) }
+                }
+                continue
+            }
             for ((path, errs) in errors) {
                 val file = WebCodeGen.resolveInside(root, path) ?: continue
                 if (!file.isFile) continue
@@ -168,20 +188,28 @@ class ProjectBuilder(
             }
         }
         _state.update {
-            it.copy(phase = Phase.FAILED, message = "Still failing after ${it.round} fix round(s). Errors are below — copy them, tweak the idea, or try a bigger model.")
+            it.copy(phase = Phase.FAILED, message = "Still failing after ${it.round} fix round${if (it.round == 1) "" else "s"}. Errors are below — copy them, tweak the idea, or try a bigger model.")
         }
     }
 
     // --- prompts ------------------------------------------------------------------------------
 
     private fun facts(pkg: String) =
-        "Android app, Kotlin, package com.example.$pkg, minSdk 26, compileSdk 35, AGP 8.7, Kotlin 2.0. " +
-            "Available libraries ONLY: androidx.core (core-ktx), androidx.appcompat, " +
-            "com.google.android.material, androidx.constraintlayout — no Compose, no Room, no Retrofit, no other " +
-            "dependencies. Theme: Theme.AppCompat.DayNight.NoActionBar (activities should extend AppCompatActivity). " +
+        "Android app, Kotlin, package com.example.$pkg, minSdk 26, compileSdk 35, AGP 8.7, Kotlin 2.0.21, Gradle 8.x. " +
+            "Already available: androidx.core (core-ktx), androidx.appcompat, com.google.android.material, " +
+            "androidx.constraintlayout, theme Theme.AppCompat.DayNight.NoActionBar. " +
+            "You MAY use any other library (Jetpack Compose, Room, Navigation, Retrofit, Coroutines…) — but then " +
+            "app/build.gradle.kts must be in the plan and must add them. For Compose: add " +
+            "id(\"org.jetbrains.kotlin.plugin.compose\") to its plugins block (the root build already declares it), " +
+            "buildFeatures { compose = true }, and the Compose BOM (androidx.compose:compose-bom:2024.10.01) with " +
+            "ui, material3, ui-tooling-preview and androidx.activity:activity-compose:1.9.3. Keep its namespace, " +
+            "applicationId, compileSdk/minSdk, compileOptions (Java 17) and kotlinOptions jvmTarget 17. Never use kapt; " +
+            "use KSP only if you also add its plugin with a version matching Kotlin 2.0.21 (2.0.21-1.0.28). " +
             "Sources go in app/src/main/java/com/example/$pkg/, resources in app/src/main/res/ " +
             "(layout/, values/, drawable/), manifest at app/src/main/AndroidManifest.xml. " +
-            "Every Activity must be declared in the manifest; MainActivity is the launcher."
+            "Every Activity must be declared in the manifest; MainActivity is the launcher. " +
+            "Things Android apps cannot do (root access, kernel modules, running a real Linux desktop natively) must be " +
+            "scoped down to what an ordinary app can do."
 
     internal fun planSystem(pkg: String) =
         "You are a senior Android engineer planning an app. ${facts(pkg)}\n" +
@@ -215,7 +243,7 @@ class ProjectBuilder(
 
     private fun contextFiles(root: File, exclude: String, budget: Int): String {
         val sb = StringBuilder()
-        for (f in sourceFiles(root).filter { it.path.contains("/src/main/") }) {
+        for (f in sourceFiles(root).filter { it.path.contains("/src/main/") || it.relativeTo(root).path == "app/build.gradle.kts" }) {
             val rel = f.relativeTo(root).path.replace('\\', '/')
             if (rel == exclude) continue
             val text = f.readText()
@@ -231,7 +259,7 @@ class ProjectBuilder(
     private fun tail(log: List<String>) = log.takeLast(15)
 
     companion object {
-        private val ALLOWED_PREFIX = Regex("^app/src/main/(java/|kotlin/|res/(layout|values|drawable|menu|xml)[^/]*/|AndroidManifest\\.xml$)")
+        private val ALLOWED_PREFIX = Regex("^app/src/main/(java/|kotlin/|res/(layout|values|drawable|menu|xml|mipmap|raw)[^/]*/|AndroidManifest\\.xml$)|^app/build\\.gradle\\.kts$")
 
         /** Reads {"files":[{"path","purpose"}]} leniently; keeps only safe, in-project paths. */
         fun parsePlan(reply: String, pkg: String): List<PlannedFile> {
@@ -246,7 +274,7 @@ class ProjectBuilder(
                 PlannedFile(path, o.optString("purpose").ifBlank { "as planned" })
             }.distinctBy { it.path }
                 // Sources before the manifest so the manifest can reference what exists.
-                .sortedBy { if (it.path.endsWith("AndroidManifest.xml")) 2 else if (it.path.contains("/res/")) 0 else 1 }
+                .sortedBy { if (it.path == "app/build.gradle.kts") -1 else if (it.path.endsWith("AndroidManifest.xml")) 2 else if (it.path.contains("/res/")) 0 else 1 }
         }
 
         /** Strips fences / chatter; XML must start at '<'. */
@@ -262,6 +290,9 @@ class ProjectBuilder(
             if (path.endsWith(".xml")) {
                 val i = text.indexOf('<')
                 if (i > 0) text = text.substring(i)
+            } else if (path.endsWith(".kts")) {
+                val i = text.indexOf("plugins")
+                if (i > 0) text = text.substring(i)
             } else if (path.endsWith(".kt")) {
                 val i = text.indexOf("package ")
                 if (i > 0) text = text.substring(i)
@@ -273,12 +304,29 @@ class ProjectBuilder(
         private val AAPT_ERR = Regex("""^ERROR:\s*(\S+?\.xml):(\d+):\s*(?:AAPT: )?(.*)$""")
         private val AAPT_ERR2 = Regex("""(\S+/res/\S+?\.xml):(\d+):\s*error:\s*(.*)$""")
 
+        // Manifest merger / resource linking / Gradle script errors: "<path>:12:5-30 Error: …" or "…build.gradle.kts:7:1: …"
+        private val GENERIC_ERR = Regex("""(\S*/app/(?:src/main/\S+?\.\w+|build\.gradle\.kts)):(\d+)(?::[\d-]+)?:?\s+(?:Error:|error:|e:)?\s*(.+)$""")
+
+        /** Gradle's "* What went wrong:" section, minus the boilerplate after it. */
+        fun whatWentWrong(log: List<String>): List<String> {
+            val out = mutableListOf<String>()
+            var inside = false
+            for (l in log) {
+                val t = l.trim()
+                if (t.startsWith("* What went wrong")) { inside = true; continue }
+                if (inside && (t.startsWith("* Try") || t.startsWith("* Exception") || t.startsWith("BUILD FAILED"))) inside = false
+                if (inside && t.isNotEmpty() && out.size < 40) out += t
+            }
+            return out
+        }
+
         /** Build errors grouped by project-relative file path. */
         fun parseErrors(log: List<String>): Map<String, List<String>> {
             val out = LinkedHashMap<String, MutableList<String>>()
             for (raw in log) {
                 val line = raw.trim()
-                val m = KOTLIN_ERR.find(line) ?: AAPT_ERR.find(line) ?: AAPT_ERR2.find(line) ?: continue
+                val m = KOTLIN_ERR.find(line) ?: AAPT_ERR.find(line) ?: AAPT_ERR2.find(line)
+                    ?: GENERIC_ERR.find(line)?.takeIf { line.contains("rror") || line.startsWith("e:") } ?: continue
                 val path = relativize(m.groupValues[1]) ?: continue
                 val msg = if (m.groupValues.size > 4) "line ${m.groupValues[2]}: ${m.groupValues[4]}" else "line ${m.groupValues[2]}: ${m.groupValues[3]}"
                 out.getOrPut(path) { mutableListOf() }.let { if (msg !in it && it.size < 20) it += msg }
@@ -288,6 +336,7 @@ class ProjectBuilder(
 
         /** "/projects/apps/<name>/app/src/…" or any absolute path → "app/src/…". */
         private fun relativize(p: String): String? {
+            if (p.endsWith("/app/build.gradle.kts") || p == "app/build.gradle.kts") return "app/build.gradle.kts"
             val i = p.indexOf("/app/src/")
             return if (i >= 0) p.substring(i + 1) else if (p.startsWith("app/src/")) p else null
         }

@@ -115,6 +115,16 @@ class DevProjectRepository(
                 updated = updated.trimEnd() + "\n\n" + ProjectTemplates.ANDROID_DEPENDENCIES + "\n"
             }
             if (updated != text) appBuild.writeText(updated)
+            // Let generated build files apply the Compose compiler plugin (Kotlin 2.x).
+            val rootBuild = File(root, "build.gradle.kts")
+            if (rootBuild.isFile) {
+                val r = rootBuild.readText()
+                if (!r.contains("plugin.compose") && r.contains("org.jetbrains.kotlin.android")) {
+                    val line = Regex("""id\("org.jetbrains.kotlin.android"\) version "([^"]+)" apply false""").find(r)
+                    if (line != null) rootBuild.writeText(r.replace(line.value,
+                        line.value + "\n    id(\"org.jetbrains.kotlin.plugin.compose\") version \"${line.groupValues[1]}\" apply false"))
+                }
+            }
             // AppCompatActivity crashes at launch without an AppCompat theme.
             val manifest = File(root, "app/src/main/AndroidManifest.xml")
             if (manifest.isFile) {
