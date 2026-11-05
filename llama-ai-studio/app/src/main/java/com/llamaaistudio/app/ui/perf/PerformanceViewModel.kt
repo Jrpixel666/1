@@ -71,7 +71,9 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val _uiState = MutableStateFlow(PerfUiState(notice = app.gpuCrashNotice))
     val uiState: StateFlow<PerfUiState> = _uiState
 
-    val engineState = engine.state
+    /** Whichever on-device engine has a model (LiteRT-LM or llama.cpp). */
+    val engineState = app.localEngineState
+    private val liteRt = app.liteRtEngine
 
     val settings: StateFlow<StudioSettings?> = app.settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -169,7 +171,7 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun runBenchmark() {
-        if (engine.state.value !is EngineState.Ready) {
+        if (app.localEngineState.value !is EngineState.Ready) {
             _uiState.update { it.copy(error = "Load a model first (Models tab)") }
             return
         }
@@ -189,6 +191,7 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     private fun backendLabel(): String {
+        liteRt.loaded?.let { return "LiteRT-LM on ${it.backend}" }
         val info = (engine.state.value as? EngineState.Ready)?.info
         val p = engine.currentLoadParams
         val threads = p?.let { " · ${it.threads} threads (${it.threadsBatch} for prompts)" }.orEmpty()
@@ -201,8 +204,17 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     private suspend fun bench(maxTokens: Int): GenerationStats? {
         var stats: GenerationStats? = null
+        val turns = listOf(ChatTurn("user", BENCH_PROMPT))
+        val params = GenerationParams(maxTokens = maxTokens, temperature = 0.0f, seed = 42)
+        if (liteRt.isLoaded) {
+            liteRt.generate(turns, params).collect { event ->
+                if (event is GenerationEvent.Done) stats = event.stats
+                if (event is GenerationEvent.Failed) _uiState.update { it.copy(error = event.reason) }
+            }
+            return stats?.takeIf { it.genTokens > 0 }
+        }
         engine.generate(
-            listOf(ChatTurn("user", BENCH_PROMPT)),
+            turns,
             GenerationParams(maxTokens = maxTokens, temperature = 0.0f, seed = 42),
         ).collect { event ->
             if (event is GenerationEvent.Done) stats = event.stats
@@ -217,6 +229,7 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
      * Saves the winner and leaves the model loaded that way.
      */
     fun autoTune() {
+        if (liteRt.isLoaded) return autoTuneLiteRt()
         val path = engine.currentModelPath()
         if (path == null) {
             _uiState.update { it.copy(error = "Load a model first (Models tab)") }
@@ -296,6 +309,41 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                     tuneTrials = trials.toList(),
                     tuneSummary = "Fastest: $winner — %.1f tok/s generation. Saved.".format(speed) +
                         if (gpuStats != null && !useGpu) " (The GPU was slower on this model, so CPU stays.)" else "",
+                )
+            }
+        }
+    }
+
+    /** LiteRT-LM: try each backend (GPU, CPU, NPU), keep the fastest one that works. */
+    private fun autoTuneLiteRt() {
+        val path = liteRt.loaded?.path ?: return
+        tuneJob = viewModelScope.launch {
+            val settings = app.settingsRepository.settings.first()
+            val trials = mutableListOf<TuneTrial>()
+            var best: Pair<com.llamaaistudio.app.engine.LiteRtBackend, Double>? = null
+            for (backend in com.llamaaistudio.app.engine.LiteRtBackend.entries) {
+                _uiState.update { it.copy(isTuning = true, tuneStep = "LiteRT-LM · ${backend.name}…", tuneTrials = trials.toList(), error = null) }
+                val loaded = liteRt.loadModel(path, backend, settings.contextLength, settings.threads)
+                if (loaded.isFailure) {
+                    trials += TuneTrial("LiteRT · ${backend.name}", 0.0, 0.0, false, "not supported here")
+                    continue
+                }
+                bench(maxTokens = 8) // warm-up (first GPU run compiles kernels)
+                val st = bench(maxTokens = 48)
+                trials += TuneTrial("LiteRT · ${backend.name}", st?.promptTps ?: 0.0, st?.genTps ?: 0.0, st != null)
+                if (st != null && (best == null || st.genTps > best.second)) best = backend to st.genTps
+            }
+            val winner = best?.first ?: settings.liteRtBackend
+            app.settingsRepository.setLiteRtBackend(winner)
+            _uiState.update { it.copy(tuneStep = "Applying ${winner.name}…", error = null) }
+            liteRt.loadModel(path, winner, settings.contextLength, settings.threads)
+            _uiState.update {
+                it.copy(
+                    isTuning = false,
+                    tuneStep = null,
+                    tuneTrials = trials.toList(),
+                    tuneSummary = best?.let { b -> "Fastest: LiteRT-LM on ${b.first} — %.1f tok/s. Saved.".format(b.second) }
+                        ?: "No backend produced output — check the model file.",
                 )
             }
         }
