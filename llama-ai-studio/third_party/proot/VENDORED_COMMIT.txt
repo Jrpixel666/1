@@ -1,0 +1,6 @@
+52d65a4dc140ca554d241a1438ddd4f6b00c9813
+https://github.com/termux/proot
+
+Local patches (Llama AI Studio):
+- src/extension/ashmem_memfd/ashmem_memfd.c: add missing #include <string.h>
+  (implicit strcmp/memset declarations are a hard error in NDK r27 clang).
