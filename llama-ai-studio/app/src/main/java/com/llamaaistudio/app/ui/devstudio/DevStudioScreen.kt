@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -190,6 +191,8 @@ private fun ProjectDetailScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+            CodeModelCard(viewModel)
+            Spacer(Modifier.height(12.dp))
             ProjectBuilderCard(viewModel, uiState)
             Spacer(Modifier.height(12.dp))
             AiBuilderCard(viewModel, uiState)
@@ -644,6 +647,67 @@ private fun GitHubBuildCard(viewModel: DevStudioViewModel) {
             if (status?.startsWith("Built on GitHub") == true) {
                 Button(onClick = { viewModel.installApk() }) { Text("Install APK") }
             }
+        }
+    }
+}
+
+@Composable
+private fun CodeModelCard(viewModel: DevStudioViewModel) {
+    val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
+    val selected by viewModel.codeModel.collectAsStateWithLifecycle()
+    val models by viewModel.codeModels.collectAsStateWithLifecycle()
+    val msg by viewModel.modelMessage.collectAsStateWithLifecycle()
+    var key by remember { mutableStateOf("") }
+    var paid by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(hasKey, paid) { if (hasKey) viewModel.loadCodeModels(paid) }
+    Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("AI model", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+            Text("Used by Project Builder and Build with AI: ${viewModel.codeSourceLabel()}",
+                style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            Spacer(Modifier.height(6.dp))
+            if (!hasKey) {
+                Text("OpenCode API key (get one at opencode.ai/auth):", style = MaterialTheme.typography.labelMedium)
+                OutlinedTextField(
+                    value = key, onValueChange = { key = it }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("sk-…") }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                )
+                Button(onClick = { viewModel.saveOpenCodeKey(key); key = "" }, enabled = key.isNotBlank()) { Text("Save key") }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { viewModel.clearOpenCodeKey() }) { Text("Remove key") }
+                }
+                Box {
+                    OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(selected?.name ?: "Same as Chat (${if (models.isEmpty()) "loading models…" else "tap to choose"})")
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Same as Chat / on-device") },
+                            onClick = { viewModel.selectCodeModel(null); open = false },
+                        )
+                        models.forEach { m ->
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(m.name + if (m.free) "  · free" else "")
+                                        if (m.contextLength > 0) Text("${m.contextLength / 1000}k context", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+                                    }
+                                },
+                                onClick = { viewModel.selectCodeModel(m); open = false },
+                            )
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = paid, onCheckedChange = { paid = it })
+                    Text("Include paid models (billed to your OpenCode account)", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            msg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = StudioTextMuted) }
         }
     }
 }

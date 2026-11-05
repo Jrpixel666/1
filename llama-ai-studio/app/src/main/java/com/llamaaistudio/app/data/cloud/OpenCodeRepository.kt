@@ -64,6 +64,22 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
     /** Cloud model used by Chat, or null = use the local (on-device) model. */
     val chatModel: StateFlow<CloudSelection?> = _chatModel
 
+    private val _codeModel = MutableStateFlow(loadSelection("code"))
+    /** Model Dev Studio's Project Builder / Build with AI uses (null = same as Chat). */
+    val codeModel: StateFlow<CloudSelection?> = _codeModel
+
+    fun selectCodeModel(model: CloudModel?) {
+        val sel = model?.let { CloudSelection(it.id, it.name, it.acceptsImages) }
+        saveSelection("code", sel)
+        _codeModel.value = sel
+    }
+
+    /** Every chat-completions model, including paid ones (billed to the user's key). */
+    suspend fun allModels(force: Boolean = false): List<CloudModel> {
+        val all = cachedModels?.takeUnless { force } ?: fetchModels().also { cachedModels = it }
+        return all.filter { it.usable }
+    }
+
     private val _visionModel = MutableStateFlow(loadSelection("vision"))
     /** Free vision model the Image workspace uses to understand pictures / write prompts. */
     val visionModel: StateFlow<CloudSelection?> = _visionModel

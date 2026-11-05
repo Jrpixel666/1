@@ -17,8 +17,8 @@ android {
         applicationId = "com.llamaaistudio.app"
         minSdk = 31 // Pixel 9 ships Android 14+; 31 keeps headroom for the thermal/perf APIs we rely on
         targetSdk = 35
-        versionCode = 18
-        versionName = "1.9.8"
+        versionCode = 19
+        versionName = "1.9.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

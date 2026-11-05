@@ -168,13 +168,53 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private fun pkgOf(project: DevProjectEntity) =
         com.llamaaistudio.app.data.repo.ProjectTemplates.packageSegment(project.name)
 
+    // --- Dev Studio's AI model (OpenCode key + model picker) -----------------------------------
+
+    val openCodeHasKey: StateFlow<Boolean> get() = app.openCode.hasKey
+    val codeModel: StateFlow<com.llamaaistudio.app.data.cloud.CloudSelection?> get() = app.openCode.codeModel
+    private val _codeModels = MutableStateFlow<List<com.llamaaistudio.app.data.cloud.CloudModel>>(emptyList())
+    val codeModels: StateFlow<List<com.llamaaistudio.app.data.cloud.CloudModel>> = _codeModels
+    private val _modelMsg = MutableStateFlow<String?>(null)
+    val modelMessage: StateFlow<String?> = _modelMsg
+
+    fun maskedOpenCodeKey(): String? = app.openCode.maskedKey()
+
+    fun saveOpenCodeKey(key: String) {
+        app.openCode.setApiKey(key)
+        _modelMsg.value = "Checking key…"
+        viewModelScope.launch {
+            _modelMsg.value = app.openCode.testKey().fold({ "Key works — $it" }, { "Key check failed: ${it.message}" })
+            loadCodeModels(false)
+        }
+    }
+
+    fun clearOpenCodeKey() { app.openCode.clearApiKey(); _codeModels.value = emptyList() }
+
+    fun loadCodeModels(includePaid: Boolean) {
+        viewModelScope.launch {
+            _codeModels.value = runCatching {
+                (if (includePaid) app.openCode.allModels() else app.openCode.freeModels())
+                    .sortedByDescending { it.contextLength }
+            }.getOrElse { _modelMsg.value = "Couldn't load models: ${it.message}"; emptyList() }
+        }
+    }
+
+    fun selectCodeModel(model: com.llamaaistudio.app.data.cloud.CloudModel?) = app.openCode.selectCodeModel(model)
+
+    /** What Dev Studio will use: its own OpenCode model, else whatever Chat uses. */
+    fun codeSourceLabel(): String =
+        app.openCode.codeModel.value?.takeIf { app.openCode.hasKey.value }?.let { "OpenCode · ${it.name}" } ?: app.ai.sourceLabel
+
     private fun codeAi(): CodeAi = object : CodeAi {
-        override val label = app.ai.sourceLabel
-        override val largeContext = app.ai.cloudModelName != null
+        private val sel = app.openCode.codeModel.value?.takeIf { app.openCode.hasKey.value }
+        override val label = codeSourceLabel()
+        override val largeContext = sel != null || app.ai.cloudModelName != null
         override suspend fun complete(system: String, user: String, maxTokens: Int): Result<String> {
             val sb = StringBuilder()
             var failure: String? = null
-            app.ai.generate(listOf(ChatTurn("system", system), ChatTurn("user", user)), GenerationParams(maxTokens = maxTokens, temperature = 0.2f))
+            val turns = listOf(ChatTurn("system", system), ChatTurn("user", user))
+            val params = GenerationParams(maxTokens = maxTokens, temperature = 0.2f)
+            (if (sel != null) app.openCode.chat(sel.id, turns, params) else app.ai.generate(turns, params))
                 .collect { e ->
                     when (e) {
                         is GenerationEvent.Token -> sb.append(e.piece)
@@ -277,7 +317,8 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     private fun builderReady(project: DevProjectEntity): Boolean = when {
         !repo.isAndroidApp(project) -> { setStatus("Project Builder makes Android apps — create an Android project."); false }
-        !app.ai.isAvailable -> { setStatus("Pick a model first — OpenCode is best for big projects."); false }
+        !app.ai.isAvailable && !(app.openCode.hasKey.value && app.openCode.codeModel.value != null) ->
+            { setStatus("Pick a model in the AI model card first — OpenCode is best for big projects."); false }
         else -> true
     }
 
