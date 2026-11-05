@@ -356,6 +356,14 @@ private fun BuildCard(viewModel: DevStudioViewModel, projectId: Long, onOpenLinu
                         },
                         modifier = Modifier.weight(1f),
                     )
+                    if (!build.running && build.lastExitCode != null && build.lastExitCode != 0) {
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        TextButton(onClick = {
+                            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("Build error", viewModel.lastFailureText()))
+                            viewModel.setStatus("Error copied — paste it into Chat or send it to whoever is helping.")
+                        }) { Text("Copy error") }
+                    }
                     TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Show log") }
                 }
                 if (showLog) {

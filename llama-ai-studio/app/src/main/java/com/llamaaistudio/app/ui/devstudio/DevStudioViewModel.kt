@@ -161,16 +161,27 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     fun stopBuild() = app.buildJob.stop()
 
-    /** Gradle's "* What went wrong:" section (plus any Kotlin/AAPT error lines), condensed. */
+    /**
+     * Why the build failed: the compiler's own "e: file:line message" errors first (that's the
+     * actual problem), then Gradle's "* What went wrong:" summary, plus out-of-memory hints.
+     */
     private fun gradleFailureReason(log: List<String>): String? {
+        val compilerErrors = log.filter { it.startsWith("e: ") }
+            .map { it.removePrefix("e: ").replace(Regex("file://\\S*/projects/apps/[^/]+/"), "") }
+            .distinct().take(8)
         val start = log.indexOfFirst { it.trim() == "* What went wrong:" }
-        val section = if (start >= 0) {
-            log.drop(start + 1).takeWhile { !it.trim().startsWith("* Try:") }
-        } else emptyList()
-        val compilerErrors = log.filter { it.startsWith("e: ") || it.contains("error:", ignoreCase = false) }.take(5)
-        val text = (section + compilerErrors).map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n")
-        return text.takeIf { it.isNotBlank() }?.take(1500)
+        val section = if (start >= 0) log.drop(start + 1).takeWhile { !it.trim().startsWith("* Try:") }
+            .map { it.trim() }.filter { it.isNotEmpty() && !it.contains("compilerRunner") } else emptyList()
+        val oom = log.firstOrNull { it.contains("OutOfMemoryError") || it.contains("Java heap space") || it.contains("GC overhead") }
+            ?.let { listOf("Gradle ran out of memory — close other apps, or lower org.gradle.jvmargs in gradle.properties.") }
+            .orEmpty()
+        val text = (compilerErrors + oom + section).joinToString("\n")
+        return text.takeIf { it.isNotBlank() }?.take(2500)
     }
+
+    /** Last failure text, for the Copy error button. */
+    fun lastFailureText(): String = gradleFailureReason(app.buildJob.log.value)
+        ?: app.buildJob.log.value.takeLast(80).joinToString("\n")
 
     // --- build ETA: learned from this project's last successful build ------------------------
 
