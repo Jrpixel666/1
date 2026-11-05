@@ -295,8 +295,9 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
 
 @Composable
 private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating: Boolean, cloudName: String?) {
+    val provider = (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.llamaaistudio.app.LlamaAiStudioApp).openCode.providerName
     val text = if (cloudName != null) {
-        if (isGenerating) "OpenCode · %.1f tok/s".format(liveTps) else "OpenCode · $cloudName"
+        if (isGenerating) "$provider · %.1f tok/s".format(liveTps) else "$provider · $cloudName"
     } else when (state) {
         is EngineState.Idle -> "No model loaded"
         is EngineState.Loading -> "Loading model…"
@@ -314,7 +315,7 @@ private fun EngineStatusLabel(state: EngineState, liveTps: Double, isGenerating:
 private fun NoModelBanner() {
     Surface(color = StudioPanelSecondary, modifier = Modifier.fillMaxWidth()) {
         Text(
-            "No model yet. In the Models tab, load an on-device GGUF model or pick a free OpenCode model.",
+            "No model yet. In the Models tab, load an on-device GGUF model or pick a free cloud model.",
             modifier = Modifier.padding(12.dp),
             style = MaterialTheme.typography.bodyMedium,
         )

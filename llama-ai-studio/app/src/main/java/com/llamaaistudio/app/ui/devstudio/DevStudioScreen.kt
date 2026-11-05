@@ -518,7 +518,7 @@ private fun ProjectBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudio
             Text(
                 "For bigger apps: the AI plans every file (screens, layouts, resources), writes each one, " +
                     "builds, and fixes build errors automatically (up to 5 rounds). Use it again to add features. " +
-                    "Best with an OpenCode model; on-device works for small and medium apps.",
+                    "Best with a cloud model (OpenRouter / OpenCode); on-device works for small and medium apps.",
                 style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
             )
             if (!mine) {
@@ -693,24 +693,24 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
                     }
                 }
             }
-            Text("Free models work without a key (OpenCode limits free use per day).",
+            Text("OpenRouter: paste your sk-or- key (free models need one). OpenCode: free models work without a key.",
                 style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
             if (hasKey) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("OpenCode Go key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Text("${viewModel.cloudProvider()} key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { viewModel.clearOpenCodeKey() }) { Text("Remove") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(checked = paid, onCheckedChange = { paid = it })
-                    Text("Include paid models (billed to your OpenCode account)", style = MaterialTheme.typography.labelSmall)
+                    Text("Include paid models (billed to your account)", style = MaterialTheme.typography.labelSmall)
                 }
             } else {
                 var showKey by remember { mutableStateOf(false) }
-                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Have OpenCode Go? Add your key") }
+                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Add OpenRouter / OpenCode key") }
                 if (showKey) {
                     OutlinedTextField(
                         value = key, onValueChange = { key = it }, modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("sk-…") }, singleLine = true,
+                        placeholder = { Text("sk-or-…") }, singleLine = true,
                         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     )
                     Button(onClick = { viewModel.saveOpenCodeKey(key); key = "" }, enabled = key.isNotBlank()) { Text("Save key") }

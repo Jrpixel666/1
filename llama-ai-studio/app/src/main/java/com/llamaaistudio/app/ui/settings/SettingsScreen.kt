@@ -114,11 +114,12 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
 
             Card(colors = CardDefaults.cardColors(containerColor = StudioPanel)) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Text("OpenCode", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+                    Text("Cloud models (OpenRouter / OpenCode)", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Text(
-                        "OpenCode Zen's free cloud models work for Chat, Web/Dev Studio and the Image assistant " +
-                            "without a key (OpenCode limits free use). A key is only needed for OpenCode Go or paid " +
-                            "models; it's encrypted on this phone (Android Keystore) and only sent to opencode.ai.",
+                        "Free cloud models for Chat, Web/Dev Studio and the Image assistant. Paste an OpenRouter key " +
+                            "(sk-or-…, from openrouter.ai/keys) to use OpenRouter's free models; without a key, OpenCode " +
+                            "Zen's free models are used. The key is encrypted on this phone (Android Keystore) and only " +
+                            "sent to that service. Now using: ${openCode.providerName}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = StudioTextMuted,
                     )
@@ -132,8 +133,8 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                         onValueChange = { keyInput = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text(if (hasKey) "Replace API key" else "API key (optional — OpenCode Go)") },
-                        placeholder = { Text("Paste your OpenCode API key") },
+                        label = { Text(if (hasKey) "Replace API key" else "API key (OpenRouter sk-or-… or OpenCode)") },
+                        placeholder = { Text("Paste your OpenRouter or OpenCode key") },
                         visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                         trailingIcon = {
@@ -190,8 +191,8 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text("In use", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Spacer(Modifier.height(4.dp))
-                    Text("Chat: " + (chatModel?.let { "OpenCode · ${it.name}" } ?: "on-device model"), style = MaterialTheme.typography.bodySmall)
-                    Text("Image assistant: " + (visionModel?.let { "OpenCode · ${it.name}" } ?: "none"), style = MaterialTheme.typography.bodySmall)
+                    Text("Chat: " + (chatModel?.let { "${openCode.providerName} · ${it.name}" } ?: "on-device model"), style = MaterialTheme.typography.bodySmall)
+                    Text("Image assistant: " + (visionModel?.let { "${openCode.providerName} · ${it.name}" } ?: "none"), style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (chatModel != null) TextButton(onClick = { openCode.selectChatModel(null) }) { Text("Chat: use local") }
                         if (visionModel != null) TextButton(onClick = { openCode.selectVisionModel(null) }) { Text("Clear image assistant") }

@@ -457,9 +457,9 @@ private fun ImageModelsTab(viewModel: ImageGenViewModel, onOpenSettings: () -> U
 
         // 2) OpenCode: free models that can *see* images (Zen has no image-generation models)
         openCodeModelSection(
-            title = "OpenCode · free image assistants",
+            title = "Cloud · free image assistants",
             subtitle = "Free models that understand images — they write prompts and plan edits; " +
-                "the on-device model draws. (OpenCode has no image-generating models.)",
+                "the on-device model draws. (The cloud models here understand images but don't draw them.)",
             hasKey = hasKey,
             query = cloud.query,
             onQueryChange = viewModel::onCloudQueryChange,

@@ -191,6 +191,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun maskedOpenCodeKey(): String? = app.openCode.maskedKey()
+    fun cloudProvider(): String = app.openCode.providerName
 
     fun saveOpenCodeKey(key: String) {
         app.openCode.setApiKey(key)
@@ -216,7 +217,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     /** What Dev Studio will use: its own OpenCode model, else whatever Chat uses. */
     fun codeSourceLabel(): String =
-        app.openCode.codeModel.value?.takeIf { app.openCode.ready.value }?.let { "OpenCode · ${it.name}" } ?: app.ai.sourceLabel
+        app.openCode.codeModel.value?.takeIf { app.openCode.ready.value }?.let { "${app.openCode.providerName} · ${it.name}" } ?: app.ai.sourceLabel
 
     private fun codeAi(): CodeAi = object : CodeAi {
         private val sel = app.openCode.codeModel.value?.takeIf { app.openCode.ready.value }
@@ -331,7 +332,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private fun builderReady(project: DevProjectEntity): Boolean = when {
         !repo.isAndroidApp(project) -> { setStatus("Project Builder makes Android apps — create an Android project."); false }
         !app.ai.isAvailable && !(app.openCode.codeModel.value != null) ->
-            { setStatus("Pick a model in the AI model card first — OpenCode is best for big projects."); false }
+            { setStatus("Pick a model in the AI model card first — a cloud model is best for big projects."); false }
         else -> true
     }
 
@@ -438,7 +439,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         val project = _uiState.value.selectedProject ?: return
         if (idea.isBlank() || _uiState.value.isGeneratingCode) return
         if (!app.ai.isAvailable) {
-            _uiState.value = _uiState.value.copy(status = "Pick a model in the Models tab first — a local GGUF or a free OpenCode model")
+            _uiState.value = _uiState.value.copy(status = "Pick a model in the Models tab first — a local GGUF or a free cloud model")
             return
         }
         codeGenJob = viewModelScope.launch {

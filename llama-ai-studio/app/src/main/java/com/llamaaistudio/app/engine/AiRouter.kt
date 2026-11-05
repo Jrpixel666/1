@@ -21,7 +21,7 @@ class AiRouter(
 
     /** Label for where the answer comes from, e.g. "OpenCode · Big Pickle" or "on-device". */
     val sourceLabel: String
-        get() = cloudModelName?.let { "OpenCode · $it" }
+        get() = cloudModelName?.let { "${cloud.providerName} · $it" }
             ?: liteRt.loaded?.let { "LiteRT-LM · ${it.name} (${it.backend})" }
             ?: "on-device model"
 

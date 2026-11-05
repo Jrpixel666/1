@@ -95,15 +95,26 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
 
     // --- key ---------------------------------------------------------------------------------
 
+    /** OpenRouter keys start with "sk-or-"; anything else (or no key) means OpenCode Zen. */
+    val isOpenRouter: Boolean get() = keys.get(KEY_NAME)?.startsWith("sk-or-") == true
+
+    /** "OpenRouter" or "OpenCode" — shown in labels and messages. */
+    val providerName: String get() = if (isOpenRouter) "OpenRouter" else "OpenCode"
+
     fun setApiKey(key: String) {
         val trimmed = key.trim()
         if (trimmed.isEmpty()) return clearApiKey()
+        val switching = trimmed.startsWith("sk-or-") != isOpenRouter
         keys.put(KEY_NAME, trimmed)
+        cachedModels = null
+        if (switching) { selectChatModel(null); selectVisionModel(null); selectCodeModel(null) }
         _hasKey.value = true
     }
 
     fun clearApiKey() {
+        if (isOpenRouter) { selectChatModel(null); selectVisionModel(null); selectCodeModel(null) }
         keys.remove(KEY_NAME)
+        cachedModels = null
         _hasKey.value = false
     }
 
@@ -150,10 +161,13 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
     }
 
     private suspend fun fetchModels(): List<CloudModel> = withContext(Dispatchers.IO) {
-        val req = Request.Builder().url(MODELS_URL).apply { authHeader()?.let { header("Authorization", it) } }.build()
+        val router = isOpenRouter
+        val req = Request.Builder().url(if (router) OPENROUTER_MODELS_URL else MODELS_URL)
+            .apply { authHeader()?.let { header("Authorization", it) } }.build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException(errorMessage(resp))
-            parseModels(resp.body?.string().orEmpty())
+            val body = resp.body?.string().orEmpty()
+            if (router) parseOpenRouterModels(body) else parseModels(body)
         }
     }
 
@@ -166,12 +180,16 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
         params: GenerationParams = GenerationParams(),
         imageJpeg: ByteArray? = null,
     ): Flow<GenerationEvent> = callbackFlow {
-        val baseUrl = cachedModels?.firstOrNull { it.id == modelId }?.chatBaseUrl ?: DEFAULT_CHAT_BASE
+        val baseUrl = if (isOpenRouter) OPENROUTER_BASE
+            else cachedModels?.firstOrNull { it.id == modelId }?.chatBaseUrl ?: DEFAULT_CHAT_BASE
         val body = buildChatBody(modelId, messages, params, imageJpeg)
+        // Thinking models can spend the whole budget reasoning and return no answer; keep it short.
+        if (isOpenRouter) body.put("reasoning", JSONObject().put("effort", "low").put("exclude", true))
         val call = client.newCall(
             Request.Builder()
                 .url(baseUrl.trimEnd('/') + "/chat/completions")
                 .apply { authHeader()?.let { header("Authorization", it) } }
+                .header("X-Title", "Llama AI Studio")
                 .header("Accept", "text/event-stream")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
@@ -250,7 +268,7 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
     /** Quick check that the key works with a free model. */
     suspend fun testKey(): Result<String> {
         val model = runCatching { freeModels(force = true).firstOrNull() }.getOrNull()
-            ?: return Result.failure(IOException("Couldn't load OpenCode's model list"))
+            ?: return Result.failure(IOException("Couldn't load $providerName's model list"))
         return complete(model.id, listOf(ChatTurn("user", "Reply with exactly: OK")), GenerationParams(maxTokens = 400, temperature = 0f))
             .map { reply -> "${model.name} replied: ${reply.take(60).ifBlank { "(empty)" }}" }
     }
@@ -262,6 +280,35 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
         const val MODELS_URL = "https://opencode.ai/zen/v1/models"
         const val DEFAULT_CHAT_BASE = "https://opencode.ai/zen/v1"
         const val KEY_URL = "https://opencode.ai/auth"
+        const val OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+        const val OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+
+        /**
+         * Parses OpenRouter's /models list. Free = prompt and completion price both "0".
+         * Only models that output text are kept (no music/image generators).
+         */
+        fun parseOpenRouterModels(json: String): List<CloudModel> {
+            val data = JSONObject(json).optJSONArray("data") ?: return emptyList()
+            return (0 until data.length()).mapNotNull { i ->
+                val m = data.optJSONObject(i) ?: return@mapNotNull null
+                val arch = m.optJSONObject("architecture")
+                val outs = arch?.optJSONArray("output_modalities")
+                // Text-only output: drops music/image generators that also emit a caption.
+                if (outs != null && (0 until outs.length()).any { outs.optString(it) != "text" }) return@mapNotNull null
+                val ins = arch?.optJSONArray("input_modalities")
+                val pricing = m.optJSONObject("pricing")
+                fun zero(k: String) = pricing?.optString(k)?.toDoubleOrNull() == 0.0
+                CloudModel(
+                    id = m.getString("id"),
+                    name = m.optString("name", m.getString("id")),
+                    description = m.optString("description"),
+                    contextLength = m.optInt("context_length", 0),
+                    free = zero("prompt") && zero("completion"),
+                    acceptsImages = ins != null && (0 until ins.length()).any { ins.optString(it) == "image" },
+                    chatBaseUrl = OPENROUTER_BASE,
+                )
+            }
+        }
 
         /** Parses the Zen catalogue. Pure (org.json only), so it's unit-testable. */
         fun parseModels(json: String): List<CloudModel> {
@@ -349,6 +396,8 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
             var promptTokens = 0
             var completionTokens = 0
             var finish = "eos"
+            var gotContent = false
+            var gotReasoning = false
             while (lines.hasNext()) {
                 val line = lines.next()
                 if (!line.startsWith("data:")) {
@@ -370,9 +419,15 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
                 val fr = choice.optString("finish_reason")
                 if (fr.isNotEmpty() && fr != "null") finish = if (fr == "length") "length" else "eos"
                 val delta = choice.optJSONObject("delta") ?: continue
+                if (delta.optString("reasoning").isNotEmpty() || delta.optString("reasoning_content").isNotEmpty()) gotReasoning = true
                 if (delta.isNull("content")) continue
                 val piece = delta.optString("content")
-                if (piece.isNotEmpty()) onContent(piece)
+                if (piece.isNotEmpty()) { gotContent = true; onContent(piece) }
+            }
+            if (sawData && !gotContent) {
+                return StreamResult(error = if (gotReasoning || finish == "length")
+                    "The model used its whole reply budget thinking and wrote no answer — pick a non-reasoning model or use Fast speed"
+                    else "The model returned an empty reply — try again or pick another model")
             }
             if (!sawData) {
                 val obj = runCatching { JSONObject(other.toString()) }.getOrNull()
@@ -394,8 +449,9 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
             val msg = runCatching { JSONObject(text).optJSONObject("error")?.optString("message") }.getOrNull()
             return when {
                 !msg.isNullOrBlank() -> msg
-                resp.code == 401 -> "OpenCode rejected the API key (401) — check it in Settings"
-                else -> "OpenCode error ${resp.code}"
+                resp.code == 401 -> "The cloud API rejected the key (401) — check it in Settings"
+                resp.code == 429 -> "Rate limited (429) — free models allow a limited number of requests; wait a bit or use Slow speed"
+                else -> "Cloud error ${resp.code}"
             }
         }
     }

@@ -173,7 +173,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                 loading = false,
                 models = result.getOrDefault(_cloud.value.models),
                 loaded = result.isSuccess || _cloud.value.loaded,
-                error = result.exceptionOrNull()?.let { "Couldn't load OpenCode models: ${it.message}" },
+                error = result.exceptionOrNull()?.let { "Couldn't load ${app.openCode.providerName} models: ${it.message}" },
             )
         }
     }

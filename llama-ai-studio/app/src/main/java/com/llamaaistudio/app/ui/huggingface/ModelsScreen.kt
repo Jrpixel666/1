@@ -107,9 +107,9 @@ private fun ActiveModelBanner(
             Text("Chat uses", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
             Text(
                 when {
-                    usingCloud -> "OpenCode · ${cloudModel!!.name}"
+                    usingCloud -> "Cloud · ${cloudModel!!.name}"
                     engineState is com.llamaaistudio.app.engine.EngineState.Ready -> "On-device · ${engineState.info.desc}"
-                    else -> "Nothing yet — load a local model or pick an OpenCode one"
+                    else -> "Nothing yet — load a local model or pick a cloud one"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
@@ -252,7 +252,7 @@ private fun DiscoverTab(
 
         // 3) OpenCode free cloud models
         openCodeModelSection(
-            title = "OpenCode · free models",
+            title = "Cloud · free models (OpenRouter / OpenCode)",
             subtitle = "Cloud models from opencode.ai with your API key — only free ones are shown",
             hasKey = hasKey,
             query = cloud.query,

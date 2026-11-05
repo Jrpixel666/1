@@ -134,4 +134,36 @@ class OpenCodeRepositoryTest {
 
         assertEquals("OpenCode returned no reply", OpenCodeRepository.parseChatStream(emptyList<String>().iterator()) {}.error)
     }
+
+    @Test
+    fun parsesOpenRouterFreeTextModels() {
+        // Shape copied from https://openrouter.ai/api/v1/models.
+        val json = """{"data":[
+          {"id":"google/gemma-4-31b-it:free","name":"Gemma 4 31B (free)","context_length":131072,
+           "pricing":{"prompt":"0","completion":"0"},
+           "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]}},
+          {"id":"openai/gpt-5","name":"GPT-5","context_length":400000,
+           "pricing":{"prompt":"0.00000125","completion":"0.00001"},
+           "architecture":{"input_modalities":["text"],"output_modalities":["text"]}},
+          {"id":"google/lyria-3-pro-preview","name":"Lyria","pricing":{"prompt":"0","completion":"0"},
+           "architecture":{"input_modalities":["text"],"output_modalities":["text","audio"]}}
+        ]}"""
+        val models = OpenCodeRepository.parseOpenRouterModels(json).associateBy { it.id }
+        assertEquals(2, models.size) // music model dropped
+        val gemma = models.getValue("google/gemma-4-31b-it:free")
+        assertTrue(gemma.free && gemma.acceptsImages && gemma.usable)
+        assertEquals(131072, gemma.contextLength)
+        assertFalse(models.getValue("openai/gpt-5").free)
+    }
+
+    @Test
+    fun reasoningOnlyStreamIsAnError() {
+        val lines = listOf(
+            """data: {"choices":[{"delta":{"content":"","reasoning":"Let me think..."}}]}""",
+            """data: {"choices":[{"delta":{"content":null},"finish_reason":"length"}]}""",
+            "data: [DONE]",
+        )
+        val r = OpenCodeRepository.parseChatStream(lines.iterator()) { }
+        assertTrue(r.error!!.contains("thinking"))
+    }
 }
