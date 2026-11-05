@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -34,9 +36,14 @@ private fun StudioApp(app: LlamaAiStudioApp) {
     val navController = rememberNavController()
     Surface(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            bottomBar = { StudioBottomBar(navController) }
+            bottomBar = { StudioBottomBar(navController) },
+            // Each screen has its own Scaffold/TopAppBar that already pads for the status bar;
+            // adding it here too doubled the gap above every screen's title.
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
         ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
+            // Mark the bottom bar's space (which includes the navigation bar) as consumed so
+            // inner Scaffolds don't add the navigation-bar inset a second time.
+            Box(modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding)) {
                 StudioNavHost(navController = navController, app = app)
             }
         }

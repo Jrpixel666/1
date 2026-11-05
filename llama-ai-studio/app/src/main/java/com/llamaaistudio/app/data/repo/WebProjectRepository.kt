@@ -3,10 +3,8 @@ package com.llamaaistudio.app.data.repo
 import android.content.Context
 import com.llamaaistudio.app.data.db.WebProjectDao
 import com.llamaaistudio.app.data.db.WebProjectEntity
-import com.llamaaistudio.app.devstudio.TermuxWebServer
 import com.llamaaistudio.app.ui.webstudio.GeneratedFile
 import com.llamaaistudio.app.ui.webstudio.WebCodeGen
-import com.llamaaistudio.app.util.DownloadsExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -103,15 +101,6 @@ class WebProjectRepository(
     /** Directory whose index.html the in-app offline preview opens. */
     fun previewRoot(project: WebProjectEntity): File =
         if (project.template == "node") File(project.rootPath, "public") else File(project.rootPath)
-
-    suspend fun exportToDownloads(project: WebProjectEntity): String = withContext(Dispatchers.IO) {
-        DownloadsExporter.exportTree(
-            context,
-            File(project.rootPath),
-            "${TermuxWebServer.EXPORT_BASE}/${project.name}",
-            skipDirs = setOf("node_modules"),
-        )
-    }
 
     private fun scaffold(root: File, name: String, template: String) {
         val pageRoot = if (template == "node") File(root, "public").apply { mkdirs() } else root

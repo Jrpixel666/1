@@ -7,9 +7,9 @@ import android.provider.MediaStore
 import java.io.File
 
 /**
- * Mirrors a project tree into the shared Downloads collection via MediaStore so Termux (after
- * `termux-setup-storage`) can reach it. Direct java.io.File writes to shared storage are
- * blocked by scoped storage, and MediaStore needs no runtime permission for app-owned files.
+ * Mirrors a project tree into the shared Downloads collection via MediaStore, so it can be
+ * opened by other apps or copied to a computer. Direct java.io.File writes to shared storage
+ * are blocked by scoped storage, and MediaStore needs no runtime permission for app-owned files.
  */
 object DownloadsExporter {
 
@@ -30,7 +30,7 @@ object DownloadsExporter {
     private fun exportFile(context: Context, file: File, relativePath: String) {
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI // minSdk 31
         // Re-exporting used to insert a fresh row every time; MediaStore then renamed the new
-        // copy ("index (1).html") and Termux kept serving/building the stale original.
+        // copy ("index (1).html") and anything reading the folder saw the stale original.
         // Overwrite our own earlier export of the same path instead.
         val existing = context.contentResolver.query(
             collection,

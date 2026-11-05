@@ -5,7 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.DevProjectEntity
-import com.llamaaistudio.app.devstudio.TermuxBridge
+import com.llamaaistudio.app.linux.AndroidBuildToolchain
+import com.llamaaistudio.app.linux.LinuxEnvironment
+import com.llamaaistudio.app.linux.LinuxJob
+import com.llamaaistudio.app.util.ApkInstaller
 import com.llamaaistudio.app.engine.ChatTurn
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
@@ -40,8 +43,14 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val _uiState = MutableStateFlow(DevStudioUiState())
     val uiState: StateFlow<DevStudioUiState> = _uiState
 
-    val termuxInstalled: Boolean get() = TermuxBridge.isTermuxInstalled(app)
-    val toolchainComponents = TermuxBridge.components
+    /** Built-in Linux state + the app-wide build job (SDK setup, Gradle builds). */
+    val linuxState: StateFlow<LinuxEnvironment.State> = app.linux.state
+    val buildStatus: StateFlow<LinuxJob.Status> = app.buildJob.status
+    val buildLog: StateFlow<List<String>> = app.buildJob.log
+
+    private val _toolchainReady = MutableStateFlow(AndroidBuildToolchain.isInstalled(app.linux.rootfs))
+    /** Java 17 + Android SDK (with aarch64 aapt2) installed inside Linux. */
+    val toolchainReady: StateFlow<Boolean> = _toolchainReady
 
     fun createProject(name: String, template: String) {
         viewModelScope.launch {
@@ -51,6 +60,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun openProject(project: DevProjectEntity) {
+        _toolchainReady.value = AndroidBuildToolchain.isInstalled(app.linux.rootfs)
         viewModelScope.launch { repo.touchOpened(project) }
         val files = repo.listFiles(File(project.rootPath))
         _uiState.value = DevStudioUiState(selectedProject = project, files = files)
@@ -98,30 +108,67 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         }
     }
 
-    fun buildViaTermux() {
+    // --- on-device builds (built-in Linux) ----------------------------------------------
+
+    /** Installs Java 17 + the Android SDK inside Linux (one-time, roughly 250 MB download). */
+    fun installToolchain() {
+        if (!app.linux.isReady) {
+            setStatus("Set up Linux first (Linux terminal → Install Linux).")
+            return
+        }
+        app.buildJob.start(
+            label = "Install Java 17 + Android SDK",
+            command = AndroidBuildToolchain.setupScript(),
+            onFinished = { code ->
+                _toolchainReady.value = AndroidBuildToolchain.isInstalled(app.linux.rootfs)
+                setStatus(if (code == 0) "Build tools installed — you can build now." else "Build tools setup failed — see the log, then try again.")
+            },
+        )
+    }
+
+    /** Builds the open project with Gradle inside Linux (APK for Android apps, `run` for console). */
+    fun build() {
         val project = _uiState.value.selectedProject ?: return
+        if (!_toolchainReady.value) {
+            setStatus("Install the build tools first.")
+            return
+        }
+        val android = repo.isAndroidApp(project)
         viewModelScope.launch {
-            repo.exportToDownloads(project)
-            // RUN_COMMAND_WORKDIR is handed to the process as-is — "~" is not expanded, so it
-            // must be absolute. ~/storage/downloads is what `termux-setup-storage` creates.
-            val termuxPath =
-                "${TermuxBridge.TERMUX_HOME}/storage/downloads/LlamaAiStudioProjects/${project.name}"
-            val ok = TermuxBridge.runCommand(
-                app,
-                // Scaffolded projects ship no Gradle wrapper; fall back to Termux's `gradle`.
-                "if [ -f ./gradlew ]; then sh ./gradlew assembleDebug; else gradle assembleDebug; fi " +
-                    "2>&1 | tee build_output.log",
-                termuxPath,
-            )
-            _uiState.value = _uiState.value.copy(
-                status = if (ok) {
-                    "Sent to Termux. Run `termux-setup-storage` once if you haven't, then check " +
-                        "~/storage/downloads/LlamaAiStudioProjects/${project.name}/build_output.log for progress."
-                } else {
-                    "Could not reach Termux. Grant this app the Termux \"Run commands\" permission, " +
-                        "and enable allow-external-apps in ~/.termux/termux.properties, then try again."
+            repo.ensureBuildFiles(project)
+            app.buildJob.start(
+                label = if (android) "Build ${project.name} (assembleDebug)" else "Run ${project.name}",
+                command = AndroidBuildToolchain.buildCommand(if (android) "assembleDebug" else "run -q"),
+                owner = project.id,
+                workdir = repo.guestPath(project),
+                env = AndroidBuildToolchain.buildEnv,
+                onFinished = { code ->
+                    setStatus(
+                        when {
+                            code != 0 -> "Build failed (exit $code) — the log shows why. The first build also downloads Gradle and dependencies, so check your connection."
+                            android && repo.builtApk(project).isFile -> "Built ${repo.builtApk(project).name} — tap Install APK."
+                            android -> "Build finished but no APK was found."
+                            else -> "Program finished — output is in the log."
+                        }
+                    )
                 },
             )
+        }
+    }
+
+    fun stopBuild() = app.buildJob.stop()
+
+    fun builtApk(): File? = _uiState.value.selectedProject?.let { repo.builtApk(it) }?.takeIf { it.isFile }
+
+    fun isAndroidProject(): Boolean = _uiState.value.selectedProject?.let(repo::isAndroidApp) ?: true
+
+    fun installApk() {
+        val apk = builtApk() ?: return setStatus("Build the project first.")
+        when (val r = ApkInstaller.install(app, apk)) {
+            ApkInstaller.Result.Launched -> {}
+            ApkInstaller.Result.NeedsPermission ->
+                setStatus("Allow \"Install unknown apps\" for Llama AI Studio, then tap Install APK again.")
+            is ApkInstaller.Result.Failed -> setStatus(r.message)
         }
     }
 
@@ -224,7 +271,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                 openFile = targetFile,
                 openFileContent = cleaned,
                 dirty = false,
-                status = "AI updated ${targetFile.name} ($tokenCount tokens) — review it, then build via Termux when ready",
+                status = "AI updated ${targetFile.name} ($tokenCount tokens) — review it, then tap Build",
             )
         }
     }

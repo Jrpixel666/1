@@ -77,14 +77,14 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.llamaaistudio.app.linux.LinuxEnvironment
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.WebProjectEntity
-import com.llamaaistudio.app.devstudio.TermuxBridge
-import com.llamaaistudio.app.devstudio.rememberTermuxActionRunner
 import com.llamaaistudio.app.ui.chat.ConfirmDialog
 import com.llamaaistudio.app.ui.chat.TextInputDialog
 import com.llamaaistudio.app.ui.theme.StudioError
@@ -95,7 +95,7 @@ import com.llamaaistudio.app.ui.theme.StudioTextMuted
 import java.io.File
 
 @Composable
-fun WebStudioScreen(app: LlamaAiStudioApp) {
+fun WebStudioScreen(app: LlamaAiStudioApp, onOpenLinux: () -> Unit = {}) {
     val viewModel: WebStudioViewModel = viewModel(factory = WebStudioViewModel.Factory(app))
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -104,7 +104,7 @@ fun WebStudioScreen(app: LlamaAiStudioApp) {
         uiState.selectedProject == null -> ProjectListScreen(viewModel, projects)
         uiState.previewUrl != null -> PreviewScreen(viewModel, uiState.previewUrl!!)
         uiState.openFile != null -> FileEditorScreen(viewModel, uiState)
-        else -> ProjectScreen(viewModel, uiState)
+        else -> ProjectScreen(viewModel, uiState, onOpenLinux)
     }
 }
 
@@ -209,7 +209,7 @@ private fun NewWebProjectDialog(onCreate: (String, String) -> Unit, onDismiss: (
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (template == "node") "public/ is served instantly by the app; server.js (/api routes) can run under Node in Termux."
+                    if (template == "node") "public/ is served instantly by the app; server.js (/api routes) runs with Node in the built-in Linux."
                     else "HTML, CSS and JavaScript — served instantly by the app's built-in server.",
                     style = MaterialTheme.typography.labelSmall,
                     color = StudioTextMuted,
@@ -225,7 +225,7 @@ private fun NewWebProjectDialog(onCreate: (String, String) -> Unit, onDismiss: (
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProjectScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
+private fun ProjectScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiState, onOpenLinux: () -> Unit) {
     val project = uiState.selectedProject ?: return
     BackHandler { viewModel.closeProject() }
 
@@ -261,7 +261,7 @@ private fun ProjectScreen(viewModel: WebStudioViewModel, uiState: WebStudioUiSta
         ) {
             uiState.status?.let { StatusCard(it, onDismiss = viewModel::clearStatus) }
             BuildCard(viewModel, uiState)
-            RunCard(viewModel, uiState)
+            RunCard(viewModel, uiState, onOpenLinux)
             FilesCard(viewModel, uiState)
         }
     }
@@ -351,7 +351,7 @@ private fun BuildCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) 
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RunCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
+private fun RunCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState, onOpenLinux: () -> Unit) {
     val context = LocalContext.current
     val project = uiState.selectedProject ?: return
     val server = uiState.server
@@ -428,66 +428,64 @@ private fun RunCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
 
         if (project.template == "node") {
             Spacer(Modifier.height(8.dp))
-            NodeTermuxSection(viewModel, uiState)
+            NodeSection(viewModel, uiState, onOpenLinux)
         }
     }
 }
 
-/** Optional for Node projects: run the real server.js (API routes) under Node in Termux. */
+/** Optional for Node projects: run the real server.js (API routes) with Node in the built-in Linux. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NodeTermuxSection(viewModel: WebStudioViewModel, uiState: WebStudioUiState) {
-    val context = LocalContext.current
-    val runTermux = rememberTermuxActionRunner(
-        onDenied = { viewModel.setStatus("Termux permission denied — server.js can't be run without it.") },
-    )
-    var showSetup by remember { mutableStateOf(false) }
+private fun NodeSection(viewModel: WebStudioViewModel, uiState: WebStudioUiState, onOpenLinux: () -> Unit) {
+    val linux by viewModel.linuxState.collectAsStateWithLifecycle()
+    val log by viewModel.nodeLog.collectAsStateWithLifecycle()
+    var showLog by remember { mutableStateOf(false) }
 
     HorizontalDivider()
     Spacer(Modifier.height(8.dp))
     Text("Run server.js with Node (optional)", style = MaterialTheme.typography.labelLarge)
     Text(
-        when (uiState.nodeServer) {
-            ServerStatus.RUNNING -> "Node server running at ${uiState.nodeUrl}"
-            ServerStatus.STARTING -> "Starting in Termux…"
-            else -> "Needed only for /api routes. Uses Termux and installs Node.js the first time (port $NODE_PORT)."
+        when {
+            linux !is LinuxEnvironment.State.Ready -> "Needs the built-in Linux — set it up once, then Node.js installs automatically."
+            uiState.nodeServer == ServerStatus.RUNNING -> "Node server running at ${uiState.nodeUrl}"
+            uiState.nodeServer == ServerStatus.STARTING -> "Starting… (the first run installs Node.js)"
+            else -> "For /api routes. Runs inside the app's own Linux on port $NODE_PORT."
         },
         style = MaterialTheme.typography.labelSmall,
         color = if (uiState.nodeServer == ServerStatus.RUNNING) StudioSuccess else StudioTextMuted,
     )
     Spacer(Modifier.height(6.dp))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (!viewModel.termuxInstalled) {
-            OutlinedButton(onClick = { context.startActivity(TermuxBridge.installTermuxIntent()) }) { Text("Install Termux") }
+        if (linux !is LinuxEnvironment.State.Ready) {
+            OutlinedButton(onClick = onOpenLinux) { Text("Set up Linux") }
         } else {
             OutlinedButton(
-                onClick = { runTermux { viewModel.startNodeInTermux() } },
+                onClick = viewModel::startNode,
                 enabled = uiState.nodeServer != ServerStatus.STARTING,
             ) { Text(if (uiState.nodeServer == ServerStatus.RUNNING) "Restart Node" else "Start Node") }
-            if (uiState.nodeServer == ServerStatus.RUNNING || uiState.nodeServer == ServerStatus.STARTING) {
-                OutlinedButton(onClick = { runTermux { viewModel.stopNodeInTermux() } }) { Text("Stop Node") }
+            if (uiState.nodeServer != ServerStatus.STOPPED && uiState.nodeServer != ServerStatus.UNKNOWN) {
+                OutlinedButton(onClick = viewModel::stopNode) { Text("Stop Node") }
             }
             if (uiState.nodeServer == ServerStatus.RUNNING) {
                 OutlinedButton(onClick = viewModel::openNodePreview) { Text("Preview Node") }
             }
-            TextButton(onClick = { showSetup = !showSetup }) { Text(if (showSetup) "Hide setup" else "Termux setup") }
+            if (log.isNotEmpty()) {
+                TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Node log") }
+            }
         }
     }
-    if (showSetup) {
-        Text(
-            "One time: open Termux and paste the setup command. It lets this app send Termux " +
-                "commands and gives Termux access to the exported project files.",
-            style = MaterialTheme.typography.labelSmall,
-            color = StudioTextMuted,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = {
-                copyToClipboard(context, "Termux setup", TermuxBridge.ALLOW_EXTERNAL_APPS_COMMAND)
-                viewModel.setStatus("Setup command copied — paste it in Termux and press Enter.")
-            }) { Text("Copy setup command") }
-            TextButton(onClick = {
-                context.packageManager.getLaunchIntentForPackage("com.termux")?.let(context::startActivity)
-            }) { Text("Open Termux") }
+    if (showLog && log.isNotEmpty()) {
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0E0F11), androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    .padding(6.dp),
+            ) {
+                log.takeLast(40).forEach {
+                    Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFE6E6E6))
+                }
+            }
         }
     }
 }

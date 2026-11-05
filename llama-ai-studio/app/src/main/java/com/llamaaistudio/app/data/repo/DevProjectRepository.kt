@@ -3,12 +3,20 @@ package com.llamaaistudio.app.data.repo
 import android.content.Context
 import com.llamaaistudio.app.data.db.DevProjectDao
 import com.llamaaistudio.app.data.db.DevProjectEntity
+import com.llamaaistudio.app.linux.AndroidBuildToolchain
 import com.llamaaistudio.app.util.DownloadsExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/**
+ * Dev Studio projects, stored in app storage and mounted inside the built-in Linux at
+ * `/projects/apps/<name>`, where Gradle builds them.
+ *
+ * Templates: "empty-compose" (historical id; an Android app with one Activity) and "library"
+ * (a Kotlin console program, built and run with the Gradle `application` plugin).
+ */
 class DevProjectRepository(
     private val context: Context,
     private val dao: DevProjectDao,
@@ -19,7 +27,10 @@ class DevProjectRepository(
 
     suspend fun createProject(name: String, template: String): DevProjectEntity =
         withContext(Dispatchers.IO) {
-            val safeName = name.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "project" }
+            val base = name.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "project" }
+            var safeName = base
+            var n = 2
+            while (File(projectsRoot, safeName).exists()) safeName = "${base}_${n++}"
             val root = File(projectsRoot, safeName)
             root.mkdirs()
             scaffold(root, safeName, template)
@@ -37,8 +48,13 @@ class DevProjectRepository(
         dao.delete(project)
     }
 
+    /** Source files only — build output and Gradle caches would otherwise flood the list. */
     fun listFiles(root: File): List<File> =
-        root.walkTopDown().filter { it.isFile }.sortedBy { it.relativeTo(root).path }.toList()
+        root.walkTopDown()
+            .onEnter { it == root || it.name !in IGNORED_DIRS }
+            .filter { it.isFile && it.name != "gradle-wrapper.jar" }
+            .sortedBy { it.relativeTo(root).path }
+            .toList()
 
     suspend fun readFile(file: File): String = withContext(Dispatchers.IO) { file.readText() }
 
@@ -47,106 +63,89 @@ class DevProjectRepository(
         file.writeText(content)
     }
 
-    /**
-     * Copies the project tree into the shared Downloads collection via MediaStore so Termux (or
-     * any other app with storage access) can reach it — direct java.io.File writes to shared
-     * storage are blocked by scoped storage on API 29+, so this goes through
-     * MediaStore.Downloads instead, which needs no runtime permission for app-contributed files.
-     */
+    /** Copies the project's sources into Download/LlamaAiStudioProjects/<name> (MediaStore). */
     suspend fun exportToDownloads(project: DevProjectEntity): String = withContext(Dispatchers.IO) {
-        DownloadsExporter.exportTree(context, File(project.rootPath), "LlamaAiStudioProjects/${project.name}")
+        DownloadsExporter.exportTree(
+            context, File(project.rootPath), "LlamaAiStudioProjects/${project.name}", skipDirs = IGNORED_DIRS,
+        )
+    }
+
+    fun guestPath(project: DevProjectEntity): String = "/projects/apps/${File(project.rootPath).name}"
+
+    fun isAndroidApp(project: DevProjectEntity): Boolean = project.template != "library"
+
+    /** The debug APK Gradle produces for an Android project, if it has been built. */
+    fun builtApk(project: DevProjectEntity): File =
+        File(project.rootPath, "app/build/outputs/apk/debug/app-debug.apk")
+
+    /**
+     * Makes sure the project can be built on-device: Gradle wrapper, gradle.properties with the
+     * aarch64 aapt2 override, local.properties pointing at the in-Linux SDK, and (for projects
+     * scaffolded by older versions of this app) the Kotlin JVM target fix. Only adds what's
+     * missing; never overwrites the user's own settings.
+     */
+    suspend fun ensureBuildFiles(project: DevProjectEntity) = withContext(Dispatchers.IO) {
+        val root = File(project.rootPath)
+        installWrapper(root)
+
+        val props = File(root, "gradle.properties")
+        val existing = if (props.exists()) props.readText() else ""
+        val keys = existing.lineSequence().map { it.substringBefore('=').trim() }.toSet()
+        val missing = AndroidBuildToolchain.gradleProperties.filter { (k, _) -> k !in keys }
+        if (missing.isNotEmpty()) {
+            val sb = StringBuilder(existing)
+            if (sb.isNotEmpty() && !sb.endsWith("\n")) sb.append('\n')
+            if (existing.isEmpty()) sb.append("# Added by Llama AI Studio for on-device builds\n")
+            missing.forEach { (k, v) -> sb.append(k).append('=').append(v).append('\n') }
+            props.writeText(sb.toString())
+        }
+        File(root, "local.properties").writeText("sdk.dir=${AndroidBuildToolchain.SDK}\n")
+
+        // Projects from older scaffolds: Kotlin 2.x defaults to JVM target 1.8 while the
+        // Java side is 17, which fails the build with "Inconsistent JVM-target compatibility".
+        val appBuild = File(root, "app/build.gradle.kts")
+        if (isAndroidApp(project) && appBuild.isFile) {
+            val text = appBuild.readText()
+            if (!text.contains("jvmTarget") && text.contains("compileOptions")) {
+                appBuild.writeText(text.trimEnd().removeSuffix("}").trimEnd() + "\n    kotlinOptions {\n        jvmTarget = \"17\"\n    }\n}\n")
+            }
+        }
+    }
+
+    private fun installWrapper(root: File) {
+        val gradlew = File(root, "gradlew")
+        if (!gradlew.exists()) {
+            context.assets.open("gradle-wrapper/gradlew").use { input -> gradlew.outputStream().use { input.copyTo(it) } }
+        }
+        gradlew.setExecutable(true, false)
+        val wrapperDir = File(root, "gradle/wrapper").apply { mkdirs() }
+        val jar = File(wrapperDir, "gradle-wrapper.jar")
+        if (!jar.exists()) {
+            context.assets.open("gradle-wrapper/gradle-wrapper.jar").use { input -> jar.outputStream().use { input.copyTo(it) } }
+        }
+        val wrapperProps = File(wrapperDir, "gradle-wrapper.properties")
+        if (!wrapperProps.exists()) {
+            wrapperProps.writeText(
+                "distributionBase=GRADLE_USER_HOME\n" +
+                    "distributionPath=wrapper/dists\n" +
+                    "distributionUrl=https\\://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip\n" +
+                    "networkTimeout=60000\n" +
+                    "validateDistributionUrl=true\n" +
+                    "zipStoreBase=GRADLE_USER_HOME\n" +
+                    "zipStorePath=wrapper/dists\n"
+            )
+        }
     }
 
     private fun scaffold(root: File, name: String, template: String) {
-        // Project names may contain '-' or start with a digit; neither is legal in a Kotlin
-        // package / applicationId segment.
-        val pkg = name.lowercase().replace(Regex("[^a-z0-9_]"), "_")
-            .let { if (it.first().isDigit()) "p_$it" else it }
-        File(root, "settings.gradle.kts").writeText(
-            """
-            pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-            dependencyResolutionManagement { repositories { google(); mavenCentral() } }
-            rootProject.name = "$name"
-            include(":app")
-            """.trimIndent()
-        )
-        File(root, "build.gradle.kts").writeText(
-            """
-            plugins {
-                id("com.android.application") version "8.7.2" apply false
-                id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-            }
-            """.trimIndent()
-        )
-        val appDir = File(root, "app/src/main").apply { mkdirs() }
-        File(root, "app/build.gradle.kts").writeText(
-            """
-            plugins {
-                id("com.android.application")
-                id("org.jetbrains.kotlin.android")
-            }
-            android {
-                namespace = "com.example.$pkg"
-                compileSdk = 35
-                defaultConfig {
-                    applicationId = "com.example.$pkg"
-                    minSdk = 26
-                    targetSdk = 35
-                    versionCode = 1
-                    versionName = "1.0"
-                }
-                compileOptions {
-                    sourceCompatibility = JavaVersion.VERSION_17
-                    targetCompatibility = JavaVersion.VERSION_17
-                }
-            }
-            """.trimIndent()
-        )
-        val pkgDir = File(appDir, "java/com/example/$pkg").apply { mkdirs() }
-        when (template) {
-            "empty-compose" -> File(pkgDir, "MainActivity.kt").writeText(
-                """
-                package com.example.$pkg
-
-                import android.app.Activity
-                import android.os.Bundle
-                import android.widget.TextView
-
-                class MainActivity : Activity() {
-                    override fun onCreate(savedInstanceState: Bundle?) {
-                        super.onCreate(savedInstanceState)
-                        setContentView(TextView(this).apply { text = "Hello from $name" })
-                    }
-                }
-                """.trimIndent()
-            )
-            else -> File(pkgDir, "Main.kt").writeText(
-                """
-                package com.example.$pkg
-
-                fun main() {
-                    println("Hello from $name")
-                }
-                """.trimIndent()
-            )
+        ProjectTemplates.files(name, template).forEach { (path, content) ->
+            File(root, path).apply { parentFile?.mkdirs() }.writeText(content)
         }
-        File(appDir, "AndroidManifest.xml").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                <?xml version="1.0" encoding="utf-8"?>
-                <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-                    <application android:label="$name">
-                        <activity android:name=".MainActivity" android:exported="true">
-                            <intent-filter>
-                                <action android:name="android.intent.action.MAIN" />
-                                <category android:name="android.intent.category.LAUNCHER" />
-                            </intent-filter>
-                        </activity>
-                    </application>
-                </manifest>
-                """.trimIndent()
-            )
-        }
+        installWrapper(root)
+    }
+
+    companion object {
+        const val GRADLE_VERSION = ProjectTemplates.GRADLE_VERSION
+        val IGNORED_DIRS = setOf("build", ".gradle", ".kotlin", ".idea", ".cxx")
     }
 }

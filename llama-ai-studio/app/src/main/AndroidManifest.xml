@@ -9,15 +9,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Lets the Dev Studio workspace hand a project folder to Termux (ARM64-native build
-         tooling) via com.termux.RUN_COMMAND; a no-op unless the user has Termux installed
-         and has enabled "allow-external-apps" in its own settings. -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
-
-    <!-- Android 11+ package visibility: without this, Termux always looks "not installed". -->
-    <queries>
-        <package android:name="com.termux" />
-    </queries>
 
     <!-- Vulkan is used when the device reports support; the app also runs CPU-only. -->
     <uses-feature
@@ -51,12 +42,12 @@
         </activity>
 
         <service
-            android:name=".webserver.WebServerService"
+            android:name=".webserver.BackgroundWorkService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Local development web server for previewing the user's own web projects" />
+                android:value="Local development tools the user starts and stops: a web server previewing their own web projects, and on-device builds/package installs in the built-in Linux" />
         </service>
 
         <provider

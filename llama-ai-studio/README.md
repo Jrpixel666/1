@@ -40,8 +40,9 @@ a Web Studio that builds and serves websites from an idea, and a lightweight And
 - **Dev Studio** — project scaffolding, a file explorer, and a plain-text/monospace code
   editor for Kotlin/Java/XML, all stored in app-private storage. See **Dev Studio and ARM64**
   below for why on-device APK building is scoped as experimental.
-  The Dev tab also opens the **Linux terminal**: a built-in Alpine Linux (see **Built-in
-  Linux** below) with one-tap installs of Node.js, Java + Gradle and git.
+  **Build APK / Run** compiles projects with Gradle *on the phone* inside the built-in Linux
+  and installs the result (see **On-device builds** below). The Dev tab also opens the
+  **Linux terminal**: Alpine Linux with one-tap installs of Node.js, Java + Gradle and git.
 
 ## Native engine
 
@@ -95,18 +96,12 @@ a crash.
 
 ## Dev Studio and ARM64
 
-Google's own Android SDK `build-tools` (`aapt2`, `d8`, `zipalign`) are published for
-linux-x86_64, macOS and Windows hosts only — there is no linux-aarch64 build. That means a
-*normal* Android build (the one that produced this APK) always runs on an x86-64 machine,
-and there is no official, supported way to run those exact binaries on the ARM64 phone
-itself. Dev Studio's toolchain panel is honest about this (see
-`app/src/main/java/com/llamaaistudio/app/devstudio/TermuxBridge.kt`): it documents which
-components are genuinely ARM64-native (Termux's own aarch64 OpenJDK, Gradle, Git, Kotlin
-compiler) and which are not, and routes on-device building through Termux rather than
-silently assuming Google's x86-64 binaries would run on the device. Plain JVM
-(Kotlin/Java) compilation that way is solid; full Android APK assembly via Termux is
-labelled experimental in the UI because AGP's own `aapt2` dependency still expects the x86
-artifact unless substituted.
+Google's own Android SDK `build-tools` (`aapt2`, `zipalign`, `aidl`) are published for
+linux-x86_64, macOS and Windows only — there is no linux-aarch64 build. On-device builds
+therefore swap in statically linked aarch64 builds of those tools (from AOSP sources, via
+lzhiyong/android-sdk-tools) and point the Android Gradle Plugin at them with
+`android.aapt2FromMavenOverride`; everything else (javac, kotlinc, d8, R8, apksigner) is Java
+and runs unchanged on the in-app OpenJDK. See **On-device builds** below.
 
 ## Web Studio's built-in server
 
@@ -129,11 +124,10 @@ artifact unless substituted.
 Cleartext HTTP from the app itself is allowed only to `127.0.0.1`/`localhost`
 (`res/xml/network_security_config.xml`).
 
-**Node projects (optional Termux):** the built-in server serves `public/`. To run the real
-`server.js` (for `/api` routes), **Start Node** sends Termux a script (`TermuxWebServer.kt`)
-that copies the project to `~/llama-web/<name>`, installs Node.js on first run, and starts it
-on port 3000. One-time Termux setup (install it from F-Droid): allow the **Run commands in
-Termux** permission, then paste **Copy setup command** into Termux.
+**Node projects:** the built-in server serves `public/`. **Start Node** runs the real
+`server.js` (for `/api` routes) with Node inside the built-in Linux on port 3000, installing
+Node.js on first use. The project folder is mounted at `/projects/web/<name>`, so there is no
+copying; Node restarts automatically when server code changes. No Termux anywhere.
 
 ## Built-in Linux (Alpine + proot)
 
@@ -159,6 +153,30 @@ The app carries its own Linux userland, so it doesn't depend on Termux:
 
 Not verified here: this build environment has no ARM64 device, so the Self-test on a real
 phone is the first time the guest actually runs.
+
+## On-device builds (Dev Studio)
+
+**Install build tools** (one time, ~250 MB, every download SHA-256 pinned in
+`linux/AndroidBuildToolchain.kt`) sets up, inside the built-in Linux:
+
+- OpenJDK 17, bash, unzip (`apk`),
+- `platforms;android-35` and `build-tools;34.0.0` from dl.google.com,
+- statically linked **aarch64** `aapt2`, `aidl`, `zipalign` (+ `adb`) from
+  [lzhiyong/android-sdk-tools](https://github.com/lzhiyong/android-sdk-tools) 35.0.2, replacing
+  Google's x86-64-only binaries. Projects get `android.aapt2FromMavenOverride` so AGP uses it.
+
+**Build APK** runs the project's Gradle wrapper (`./gradlew assembleDebug`, Gradle 8.14.3,
+added to every project) in `/projects/apps/<name>` and **Install APK** hands
+`app-debug.apk` to the system installer. Console (Kotlin) projects use `gradle run`. The
+first build downloads Gradle and the Android Gradle Plugin, so it needs a connection.
+
+Verified off-device: both templates (`ProjectTemplates.kt`) build with the real Gradle + AGP
+8.7.2 using the same `aapt2` override (APK with a launchable `MainActivity`; the console
+program prints its greeting). Running Gradle and the ARM64 `aapt2` inside proot on a phone is
+verified only by running it there.
+
+A foreground service (`BackgroundWorkService`) keeps servers, builds and installs running
+while you switch apps, with a **Stop all** action in its notification.
 
 ## Database migrations
 

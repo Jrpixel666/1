@@ -14,12 +14,15 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -61,6 +64,9 @@ fun StudioBottomBar(navController: NavHostController) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.hierarchy?.firstOrNull()?.route
 
+    // Six tabs on a phone: at larger font sizes the labels no longer fit ("Imag…", "Mode…"),
+    // so show only the selected tab's label there.
+    val compactLabels = LocalDensity.current.fontScale > 1.15f
     NavigationBar {
         StudioDestination.entries.forEach { dest ->
             val selected = currentRoute == dest.route ||
@@ -75,7 +81,16 @@ fun StudioBottomBar(navController: NavHostController) {
                         contentDescription = dest.label,
                     )
                 },
-                label = { Text(dest.label, maxLines = 1, softWrap = false) },
+                label = {
+                    Text(
+                        dest.label,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+                alwaysShowLabel = !compactLabels,
             )
         }
     }
@@ -97,7 +112,9 @@ fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
             )
         }
         composable(StudioDestination.Web.route) {
-            WebStudioScreen(app = app)
+            WebStudioScreen(app = app, onOpenLinux = {
+                navController.navigate(LINUX_ROUTE) { launchSingleTop = true }
+            })
         }
         composable(StudioDestination.Image.route) {
             ImageGenScreen(app = app)

@@ -23,45 +23,49 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Keeps the process in the foreground while the built-in web server runs. Without it, testing
- * the site in an external browser fails: once this app is in the background, Android (14+)
- * freezes cached processes and the server stops answering. The notification shows the URL
- * and has a Stop action. The service ends itself as soon as the server stops.
+ * Keeps the process in the foreground while long-running work is active — the built-in web
+ * server, a Node server, a Gradle build or a package install in Linux. Without it Android
+ * (14+) freezes the app as soon as you switch to a browser or another app, and the server
+ * stops answering / the build stalls. Shows what's running, with a Stop-all action, and ends
+ * itself when nothing is running any more. Started by [LlamaAiStudioApp] whenever
+ * [LlamaAiStudioApp.backgroundWork] becomes non-empty.
  */
-class WebServerService : Service() {
+class BackgroundWorkService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val server get() = (application as LlamaAiStudioApp).webServer
+    private val app get() = application as LlamaAiStudioApp
     private var watchJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            server.stop()
+        if (intent?.action == ACTION_STOP_ALL) {
+            app.stopAllBackgroundWork()
             stopSelfCompat()
             return START_NOT_STICKY
         }
-        val state = server.state.value
-        if (!state.running) {
-            stopSelfCompat()
-            return START_NOT_STICKY
-        }
+        val work = app.backgroundWork.value
         ensureChannel()
+        // startForeground must be called promptly after startForegroundService(), even if the
+        // work already finished in the meantime — then stop right after.
         ServiceCompat.startForeground(
-            this, NOTIFICATION_ID, buildNotification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            this, NOTIFICATION_ID, buildNotification(work), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
-        watchJob?.cancel() // onStartCommand runs again on every (re)start of the server
+        if (work.isEmpty()) {
+            stopSelfCompat()
+            return START_NOT_STICKY
+        }
+        watchJob?.cancel()
         watchJob = scope.launch {
-            server.state.collect { s ->
-                if (!s.running) {
+            app.backgroundWork.collect { items ->
+                if (items.isEmpty()) {
                     stopSelfCompat()
                 } else {
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(s))
+                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(items))
                 }
             }
         }
-        // If Android kills the process, the server is gone too; don't restart an empty service.
+        // If Android kills the process, the work is gone too; don't restart an empty service.
         return START_NOT_STICKY
     }
 
@@ -79,15 +83,15 @@ class WebServerService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Web server", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shown while Web Studio's built-in server is running"
+                NotificationChannel(CHANNEL_ID, "Background work", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Shown while a server, build or install keeps running"
                     setShowBadge(false)
                 }
             )
         }
     }
 
-    private fun buildNotification(state: LocalWebServer.State): Notification {
+    private fun buildNotification(items: List<String>): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -95,20 +99,24 @@ class WebServerService : Service() {
         )
         val stop = PendingIntent.getService(
             this, 1,
-            Intent(this, WebServerService::class.java).setAction(ACTION_STOP),
+            Intent(this, BackgroundWorkService::class.java).setAction(ACTION_STOP_ALL),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val label = state.config?.label ?: "site"
-        val text = state.lanUrl?.let { "${state.localUrl}  ·  Wi-Fi: $it" } ?: state.localUrl.orEmpty()
+        val title = when (items.size) {
+            0 -> "Finishing…"
+            1 -> items.first().substringBefore(" · ")
+            else -> "${items.size} tasks running"
+        }
+        val text = items.joinToString("\n")
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_web)
-            .setContentTitle("Serving $label")
-            .setContentText(text)
+            .setContentTitle(title)
+            .setContentText(items.firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
-            .addAction(0, "Stop", stop)
+            .addAction(0, "Stop all", stop)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
@@ -116,11 +124,10 @@ class WebServerService : Service() {
     companion object {
         private const val CHANNEL_ID = "web_server"
         private const val NOTIFICATION_ID = 4210
-        private const val ACTION_STOP = "com.llamaaistudio.app.webserver.STOP"
+        private const val ACTION_STOP_ALL = "com.llamaaistudio.app.STOP_ALL_WORK"
 
-        /** Call after the server has started. */
         fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, WebServerService::class.java))
+            ContextCompat.startForegroundService(context, Intent(context, BackgroundWorkService::class.java))
         }
     }
 }

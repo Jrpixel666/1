@@ -5,13 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.WebProjectEntity
-import com.llamaaistudio.app.devstudio.TermuxBridge
-import com.llamaaistudio.app.devstudio.TermuxWebServer
 import com.llamaaistudio.app.engine.ChatTurn
 import com.llamaaistudio.app.engine.GenerationEvent
 import com.llamaaistudio.app.engine.GenerationParams
 import com.llamaaistudio.app.webserver.LocalWebServer
-import com.llamaaistudio.app.webserver.WebServerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,7 +39,7 @@ data class WebStudioUiState(
     /** Built-in server, when it is serving *this* project. */
     val server: LocalWebServer.State = LocalWebServer.State(),
     val shareOnLan: Boolean = false,
-    /** Optional: the project's own server.js running under Node in Termux (Node template only). */
+    /** Optional: the project's own server.js running under Node in the built-in Linux. */
     val nodeServer: ServerStatus = ServerStatus.UNKNOWN,
     /** URL shown in the in-app preview, or null when the preview is closed. */
     val previewUrl: String? = null,
@@ -51,12 +48,11 @@ data class WebStudioUiState(
     val nodeUrl: String get() = "http://127.0.0.1:$NODE_PORT/"
 }
 
-/** Port the optional Termux Node server uses (the built-in server keeps the project port). */
+/** Port server.js listens on inside the built-in Linux (the static server keeps the project port). */
 const val NODE_PORT = 3000
 
 private const val WEB_GEN_MAX_TOKENS = 2048
 private const val WEB_GEN_CONTEXT_CHARS = 5000
-private const val STARTING_TIMEOUT_MS = 120_000L // first run installs Python/Node
 
 class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val repo = app.webProjectRepository
@@ -67,7 +63,6 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     private val _uiState = MutableStateFlow(WebStudioUiState())
     val uiState: StateFlow<WebStudioUiState> = _uiState
 
-    val termuxInstalled: Boolean get() = TermuxBridge.isTermuxInstalled(app)
     val modelLoaded: Boolean get() = app.llamaEngine.isLoaded
 
     private val probeClient = app.httpClient.newBuilder()
@@ -285,7 +280,6 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         )
         result.onSuccess { state ->
             _uiState.update { it.copy(server = state) }
-            runCatching { WebServerService.start(app) }
         }.onFailure { e ->
             _uiState.update { it.copy(status = "Couldn't start the server: ${e.message}") }
         }
@@ -328,79 +322,90 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         _uiState.update { it.copy(previewUrl = null) }
     }
 
-    // --- optional: Node.js server.js in Termux --------------------------------------------
+    // --- optional: Node.js server.js inside the built-in Linux ----------------------------
 
-    /** Exports the project; Termux installs Node.js if missing and (re)starts server.js. */
-    fun startNodeInTermux() {
+    val linuxState get() = app.linux.state
+    val nodeLog get() = app.nodeJob.log
+
+    /**
+     * Runs the project's server.js with Node inside the built-in Linux (installing Node.js on
+     * first use). The project folder is mounted at /projects/web/<name>, so Node always sees
+     * the current files — no export or copying.
+     */
+    fun startNode() {
         val project = _uiState.value.selectedProject ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(status = "Preparing files for Termux…") }
-            repo.exportToDownloads(project)
-            val ok = TermuxBridge.runCommand(app, TermuxWebServer.startScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME)
-            if (ok) {
-                startRequestedAt = System.currentTimeMillis()
-                _uiState.update {
-                    it.copy(
-                        nodeServer = ServerStatus.STARTING,
-                        status = "Starting server.js in Termux. The first run installs Node.js — that can take a minute.",
-                    )
-                }
-            } else {
-                _uiState.update { it.copy(status = termuxUnreachableMessage()) }
-            }
+        if (!app.linux.isReady) {
+            _uiState.update { it.copy(status = "Set up the built-in Linux first (Linux terminal → Install Linux).") }
+            return
         }
+        startRequestedAt = System.currentTimeMillis()
+        _uiState.update { it.copy(nodeServer = ServerStatus.STARTING, status = "Starting server.js…") }
+        app.nodeJob.start(
+            label = "node server.js (${project.name})",
+            command = nodeCommand(File(project.rootPath).name),
+            owner = project.id,
+        )
     }
 
-    fun stopNodeInTermux() {
-        val project = _uiState.value.selectedProject ?: return
-        val ok = TermuxBridge.runCommand(
-            app, TermuxWebServer.stopScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME, background = true,
-        )
+    fun stopNode() {
+        app.nodeJob.stop()
         _uiState.update {
             it.copy(
-                status = if (ok) "Stopping the Node server…" else termuxUnreachableMessage(),
+                nodeServer = ServerStatus.STOPPED,
+                status = "Node server stopped",
                 previewUrl = if (it.previewUrl == it.nodeUrl) null else it.previewUrl,
             )
         }
     }
 
-    private suspend fun syncNodeIfRunning(changed: List<File>) {
+    private fun nodeCommand(dir: String): String = """
+        cd '/projects/web/$dir' || exit 1
+        if ! command -v node >/dev/null 2>&1; then
+          echo '==> Installing Node.js (first run only)…'
+          apk add --no-progress nodejs npm || exit 1
+        fi
+        if [ -f package.json ] && grep -q '"dependencies"' package.json; then
+          echo '==> npm install'
+          npm install --no-audit --no-fund || exit 1
+        fi
+        ENTRY=server.js
+        [ -f "${'$'}ENTRY" ] || ENTRY=index.js
+        echo "==> node ${'$'}ENTRY on http://127.0.0.1:$NODE_PORT"
+        PORT=$NODE_PORT exec node "${'$'}ENTRY"
+    """.trimIndent()
+
+    private val nodeRunningForThis: Boolean
+        get() = app.nodeJob.status.value.let { it.running && it.owner == _uiState.value.selectedProject?.id }
+
+    /** Static files are read per request by server.js; only server code needs a restart. */
+    private fun syncNodeIfRunning(changed: List<File>) {
         val project = _uiState.value.selectedProject ?: return
-        if (project.template != "node" || _uiState.value.nodeServer != ServerStatus.RUNNING) return
-        repo.exportToDownloads(project)
+        if (project.template != "node" || !nodeRunningForThis) return
         val root = File(project.rootPath).canonicalPath
         val serverCodeChanged = changed.any {
-            (it.parentFile?.canonicalPath == root && it.extension == "js") || it.name == "package.json"
+            (it.parentFile?.canonicalPath == root && it.extension in setOf("js", "mjs", "cjs")) || it.name == "package.json"
         }
         if (serverCodeChanged) {
-            startNodeInTermux() // Node only picks up server code on restart
-        } else {
-            TermuxBridge.runCommand(
-                app, TermuxWebServer.syncScript(project.name, NODE_PORT), TermuxBridge.TERMUX_HOME, background = true,
-            )
+            startNode()
+            _uiState.update { it.copy(status = (it.status ?: "") + " Restarting Node for the new server code.") }
         }
-    }
-
-    private fun termuxUnreachableMessage(): String = when {
-        !TermuxBridge.isTermuxInstalled(app) -> "Termux isn't installed — install it from F-Droid first."
-        !TermuxBridge.hasRunCommandPermission(app) -> "Allow Llama AI Studio to run commands in Termux, then try again."
-        else -> "Termux didn't accept the command. Run the one-time setup command in Termux (Copy setup command), then try again."
     }
 
     private fun startNodePolling() {
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
             while (isActive) {
-                val up = probe(NODE_PORT)
+                val jobRunning = nodeRunningForThis
+                val up = jobRunning && probe(NODE_PORT)
                 _uiState.update { state ->
-                    val starting = state.nodeServer == ServerStatus.STARTING &&
-                        System.currentTimeMillis() - startRequestedAt < STARTING_TIMEOUT_MS
                     val next = when {
                         up -> ServerStatus.RUNNING
-                        starting -> ServerStatus.STARTING
+                        jobRunning -> ServerStatus.STARTING
                         else -> ServerStatus.STOPPED
                     }
                     val justStarted = next == ServerStatus.RUNNING && state.nodeServer == ServerStatus.STARTING
+                    val exited = state.nodeServer != ServerStatus.STOPPED && next == ServerStatus.STOPPED &&
+                        System.currentTimeMillis() - startRequestedAt > 1500
                     state.copy(
                         nodeServer = next,
                         previewUrl = when {
@@ -408,10 +413,14 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                             next != ServerStatus.RUNNING && state.previewUrl == state.nodeUrl -> null
                             else -> state.previewUrl
                         },
-                        status = if (justStarted) "Node server running at ${state.nodeUrl}" else state.status,
+                        status = when {
+                            justStarted -> "Node server running at ${state.nodeUrl}"
+                            exited && state.nodeServer == ServerStatus.STARTING -> "server.js exited — see the Node log."
+                            else -> state.status
+                        },
                     )
                 }
-                delay(if (_uiState.value.nodeServer == ServerStatus.STARTING) 1000 else 3000)
+                delay(if (_uiState.value.nodeServer == ServerStatus.STARTING) 700 else 2500)
             }
         }
     }

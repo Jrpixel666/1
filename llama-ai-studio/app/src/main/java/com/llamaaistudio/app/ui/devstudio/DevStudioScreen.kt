@@ -1,6 +1,16 @@
 package com.llamaaistudio.app.ui.devstudio
 
 import androidx.compose.foundation.layout.Arrangement
+import com.llamaaistudio.app.linux.LinuxEnvironment
+import com.llamaaistudio.app.linux.LinuxJob
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,8 +54,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.db.DevProjectEntity
-import com.llamaaistudio.app.devstudio.TermuxBridge
-import com.llamaaistudio.app.devstudio.rememberTermuxActionRunner
 import com.llamaaistudio.app.ui.linux.LinuxEntryCard
 import com.llamaaistudio.app.ui.theme.StudioOrange
 import com.llamaaistudio.app.ui.theme.StudioPanel
@@ -65,7 +73,7 @@ fun DevStudioScreen(app: LlamaAiStudioApp, onOpenLinux: () -> Unit = {}) {
     } else if (uiState.openFile != null) {
         FileEditorScreen(viewModel, uiState)
     } else {
-        ProjectDetailScreen(app, viewModel, uiState)
+        ProjectDetailScreen(viewModel, uiState, onOpenLinux)
     }
 }
 
@@ -151,9 +159,9 @@ private fun NewProjectDialog(onCreate: (String, String) -> Unit, onDismiss: () -
 
 @Composable
 private fun ProjectDetailScreen(
-    app: LlamaAiStudioApp,
     viewModel: DevStudioViewModel,
     uiState: DevStudioUiState,
+    onOpenLinux: () -> Unit,
 ) {
     val project = uiState.selectedProject ?: return
     val root = File(project.rootPath)
@@ -180,7 +188,7 @@ private fun ProjectDetailScreen(
             AiBuilderCard(viewModel, uiState)
 
             Spacer(Modifier.height(16.dp))
-            ToolchainCard(app, viewModel)
+            BuildCard(viewModel, project.id, onOpenLinux)
 
             uiState.status?.let {
                 Spacer(Modifier.height(8.dp))
@@ -267,46 +275,127 @@ private fun AiBuilderCard(viewModel: DevStudioViewModel, uiState: DevStudioUiSta
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ToolchainCard(app: LlamaAiStudioApp, viewModel: DevStudioViewModel) {
-    var showToolchainDetails by remember { mutableStateOf(false) }
-    val runTermux = rememberTermuxActionRunner(
-        onDenied = { viewModel.setStatus("Termux permission denied — builds can't be sent to Termux without it.") },
-    )
+private fun BuildCard(viewModel: DevStudioViewModel, projectId: Long, onOpenLinux: () -> Unit) {
+    val linux by viewModel.linuxState.collectAsStateWithLifecycle()
+    val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
+    val buildAny by viewModel.buildStatus.collectAsStateWithLifecycle()
+    val logAny by viewModel.buildLog.collectAsStateWithLifecycle()
+    // The build job is app-wide: show it here only for this project (or the shared SDK setup).
+    val mine = buildAny.owner == null || buildAny.owner == projectId
+    val build = if (mine) buildAny else LinuxJob.Status()
+    val log = if (mine) logAny else emptyList()
+    val busyElsewhere = buildAny.running && !mine
+    val android = viewModel.isAndroidProject()
+    var showLog by remember { mutableStateOf(true) }
+    var confirmLicense by remember { mutableStateOf(false) }
 
     Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("Build toolchain", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+            Text("Build & run", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (viewModel.termuxInstalled) "Termux detected" else "Termux not installed",
-                color = if (viewModel.termuxInstalled) StudioSuccess else StudioTextMuted,
+                when {
+                    linux !is LinuxEnvironment.State.Ready -> "Builds run on this phone inside the built-in Linux. Set it up first."
+                    !toolchainReady -> "One-time setup: Java 17 and the Android SDK (with ARM64 aapt2) inside Linux — about 250 MB."
+                    android -> "Gradle builds a debug APK on this phone; then install it with one tap. The first build downloads Gradle and the Android plugins."
+                    else -> "Gradle compiles and runs this Kotlin program on this phone."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
             )
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { showToolchainDetails = !showToolchainDetails }) {
-                Text(if (showToolchainDetails) "Hide ARM64 compatibility notes" else "Show ARM64 compatibility notes")
-            }
-            if (showToolchainDetails) {
-                TermuxBridge.components.forEach { c ->
-                    Text(
-                        "${c.name}: ${if (c.arm64Compatible) "✓" else "✗"} ${c.note}",
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                when {
+                    linux !is LinuxEnvironment.State.Ready -> Button(onClick = onOpenLinux) { Text("Set up Linux") }
+                    busyElsewhere -> Text(
+                        "Another build is running: ${buildAny.label}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (c.arm64Compatible) StudioTextMuted else MaterialTheme.colorScheme.error,
+                        color = StudioTextMuted,
                     )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!viewModel.termuxInstalled) {
-                    Button(onClick = {
-                        app.startActivity(TermuxBridge.installTermuxIntent())
-                    }) { Text("Install Termux") }
-                } else {
-                    Button(onClick = { runTermux { viewModel.buildViaTermux() } }) { Text("Build via Termux") }
+                    build.running -> {
+                        Button(onClick = {}, enabled = false) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (toolchainReady) "Building…" else "Installing…")
+                        }
+                        TextButton(onClick = viewModel::stopBuild) { Text("Stop") }
+                    }
+                    !toolchainReady -> Button(onClick = { confirmLicense = true }) { Text("Install build tools") }
+                    else -> {
+                        Button(onClick = viewModel::build) { Text(if (android) "Build APK" else "Run") }
+                        if (android && viewModel.builtApk() != null) {
+                            OutlinedButton(onClick = viewModel::installApk) { Text("Install APK") }
+                        }
+                    }
                 }
                 TextButton(onClick = { viewModel.exportToDownloads() }) { Text("Export to Downloads") }
             }
+
+            if (log.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (build.label ?: "Log") + when {
+                            build.running -> " · running"
+                            build.lastExitCode == 0 -> " · ok"
+                            build.lastExitCode != null -> " · failed (${build.lastExitCode})"
+                            else -> ""
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = when {
+                            build.running -> StudioTextMuted
+                            build.lastExitCode == 0 -> StudioSuccess
+                            else -> MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Show log") }
+                }
+                if (showLog) {
+                    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                    androidx.compose.runtime.LaunchedEffect(log.size) {
+                        if (log.isNotEmpty()) listState.scrollToItem(log.lastIndex)
+                    }
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp)
+                                .background(Color(0xFF0E0F11), RoundedCornerShape(6.dp))
+                                .padding(6.dp),
+                        ) {
+                            items(log.size) { i ->
+                                Text(log[i], fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFE6E6E6))
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    if (confirmLicense) {
+        AlertDialog(
+            onDismissRequest = { confirmLicense = false },
+            title = { Text("Install build tools?") },
+            text = {
+                Text(
+                    "Downloads OpenJDK 17 (Alpine), the Android 35 platform and build-tools 34 from Google, and " +
+                        "ARM64 builds of aapt2/aidl/zipalign (github.com/lzhiyong/android-sdk-tools). Every download is " +
+                        "checksum-verified. About 250 MB.\n\nBy continuing you accept the Android SDK License " +
+                        "Agreement (developer.android.com/studio/terms)."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmLicense = false; viewModel.installToolchain() }) { Text("Accept & install") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLicense = false }) { Text("Cancel") } },
+        )
     }
 }
 

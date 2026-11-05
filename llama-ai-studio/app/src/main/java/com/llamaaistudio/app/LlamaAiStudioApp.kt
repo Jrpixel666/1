@@ -14,7 +14,9 @@ import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.LlamaEngine
 import com.llamaaistudio.app.engine.ModelLoadParams
 import com.llamaaistudio.app.linux.LinuxEnvironment
+import com.llamaaistudio.app.linux.LinuxJob
 import com.llamaaistudio.app.linux.LinuxTerminal
+import com.llamaaistudio.app.webserver.BackgroundWorkService
 import com.llamaaistudio.app.webserver.LocalWebServer
 import com.llamaaistudio.imagegen.ImageGenEngine
 import android.util.Log
@@ -22,7 +24,11 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
@@ -59,6 +65,14 @@ class LlamaAiStudioApp : Application() {
         private set
 
     lateinit var linuxTerminal: LinuxTerminal
+        private set
+
+    /** Web Studio's Node.js server (server.js) running inside the built-in Linux. */
+    lateinit var nodeJob: LinuxJob
+        private set
+
+    /** Dev Studio's Gradle builds / Android SDK setup inside the built-in Linux. */
+    lateinit var buildJob: LinuxJob
         private set
 
     /** Web Studio's built-in server; app-scoped so it keeps running across screens. */
@@ -107,6 +121,8 @@ class LlamaAiStudioApp : Application() {
         hfApi = HfApi.create(httpClient)
         linux = LinuxEnvironment(this, httpClient)
         linuxTerminal = LinuxTerminal(linux)
+        nodeJob = LinuxJob(linux, "node")
+        buildJob = LinuxJob(linux, "build")
         downloadManager = ModelDownloadManager(modelRepository.modelsDir, { file, meta, sha, verified ->
             modelRepository.registerModel(
                 file = file,
@@ -139,6 +155,44 @@ class LlamaAiStudioApp : Application() {
         imageGalleryRepository = ImageGalleryRepository(database.generatedImageDao())
 
         restoreLastUsedModels()
+        watchBackgroundWork()
+    }
+
+    /**
+     * Human-readable list of long-running work (servers, builds, installs). While non-empty,
+     * [BackgroundWorkService] keeps the process in the foreground so it isn't frozen when the
+     * user switches to a browser or another app.
+     */
+    val backgroundWork: StateFlow<List<String>> by lazy {
+        combine(webServer.state, nodeJob.status, buildJob.status, linuxTerminal.running) { web, node, build, term ->
+            buildList {
+                if (web.running) add("Web server · ${web.localUrl}")
+                if (node.running) add("Node.js · ${node.label}")
+                if (build.running) add("Build · ${build.label}")
+                if (term != null) add("Linux · $term")
+            }
+        }.stateIn(applicationScope, SharingStarted.Eagerly, emptyList())
+    }
+
+    private fun watchBackgroundWork() {
+        applicationScope.launch(Dispatchers.Main) {
+            var wasActive = false
+            backgroundWork.collect { items ->
+                val active = items.isNotEmpty()
+                // Started on the transition to "something is running" — that's always right
+                // after the user tapped Start/Build/Install, i.e. while the app is in the
+                // foreground, which Android requires for starting a foreground service.
+                if (active && !wasActive) runCatching { BackgroundWorkService.start(this@LlamaAiStudioApp) }
+                wasActive = active
+            }
+        }
+    }
+
+    fun stopAllBackgroundWork() {
+        webServer.stop()
+        nodeJob.stop()
+        buildJob.stop()
+        linuxTerminal.stop()
     }
 
     /**
