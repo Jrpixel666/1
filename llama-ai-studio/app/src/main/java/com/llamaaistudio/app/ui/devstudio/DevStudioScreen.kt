@@ -335,6 +335,9 @@ private fun BuildCard(viewModel: DevStudioViewModel, projectId: Long, onOpenLinu
                 TextButton(onClick = { viewModel.exportToDownloads() }) { Text("Export to Downloads") }
             }
 
+            if (build.running && toolchainReady && build.owner == projectId) {
+                BuildEta(build.startedAt, log, viewModel.lastBuild(projectId, android))
+            }
             if (log.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -429,3 +432,52 @@ private fun FileEditorScreen(viewModel: DevStudioViewModel, uiState: DevStudioUi
 
 private fun formatEta(seconds: Double): String =
     if (seconds >= 60) "${(seconds / 60).toInt()}m ${(seconds % 60).toInt()}s" else "${seconds.toInt()}s"
+
+/** Elapsed time, and — from the last successful build — progress and time remaining. */
+@Composable
+private fun BuildEta(startedAt: Long?, log: List<String>, last: Pair<Long, Int>?) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    val elapsed = (now - (startedAt ?: now)).coerceAtLeast(0)
+    val tasksDone = log.count { it.startsWith("> Task ") }
+    Column(modifier = Modifier.padding(top = 8.dp)) {
+        if (last == null) {
+            Text(
+                "Elapsed ${fmtDuration(elapsed)} · first build of this project usually takes 5–15 min " +
+                    "(downloads Gradle and the Android plugins). Later builds show an ETA.",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+        } else {
+            val (lastMs, lastTasks) = last
+            // Task progress when we have it; otherwise fall back to time.
+            val fraction = when {
+                lastTasks > 0 && tasksDone > 0 -> (tasksDone.toFloat() / lastTasks).coerceIn(0f, 0.97f)
+                else -> (elapsed.toFloat() / lastMs).coerceIn(0f, 0.97f)
+            }
+            val remaining = when {
+                fraction > 0.1f -> (elapsed / fraction - elapsed).toLong()
+                else -> (lastMs - elapsed)
+            }.coerceAtLeast(0)
+            androidx.compose.material3.LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${(fraction * 100).toInt()}% · elapsed ${fmtDuration(elapsed)} · " +
+                    (if (remaining > 0) "about ${fmtDuration(remaining)} left" else "finishing…") +
+                    " (last build: ${fmtDuration(lastMs)})",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+        }
+    }
+}
+
+private fun fmtDuration(ms: Long): String {
+    val s = ms / 1000
+    return if (s >= 60) "${s / 60}m ${s % 60}s" else "${s}s"
+}

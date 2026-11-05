@@ -22,6 +22,7 @@ class LinuxJob(private val env: LinuxEnvironment, val name: String) {
         val owner: Long? = null,
         val lastExitCode: Int? = null,
         val finishedAt: Long? = null,
+        val startedAt: Long? = null,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -55,7 +56,8 @@ class LinuxJob(private val env: LinuxEnvironment, val name: String) {
         val previous = job
         if (clearLog) synchronized(buffer) { buffer.clear() }
         _log.value = synchronized(buffer) { buffer.snapshot() }
-        _status.value = Status(running = true, label = label, owner = owner)
+        val startedAt = System.currentTimeMillis()
+        _status.value = Status(running = true, label = label, owner = owner, startedAt = startedAt)
         job = scope.launch {
             previous?.cancel()
             previous?.join()
@@ -71,7 +73,7 @@ class LinuxJob(private val env: LinuxEnvironment, val name: String) {
                 append("[error] ${e.message}\n")
             } finally {
                 if (job == null || job == coroutineContext[Job]) {
-                    _status.value = Status(false, label, owner, code, System.currentTimeMillis())
+                    _status.value = Status(false, label, owner, code, System.currentTimeMillis(), startedAt)
                 }
                 onFinished(code)
             }

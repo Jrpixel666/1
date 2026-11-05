@@ -143,6 +143,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                 workdir = repo.guestPath(project),
                 env = AndroidBuildToolchain.buildEnv,
                 onFinished = { code ->
+                    if (code == 0) recordBuild(project.id, android)
                     setStatus(
                         when {
                             code != 0 -> "Build failed (exit $code) — the log shows why. The first build also downloads Gradle and dependencies, so check your connection."
@@ -157,6 +158,27 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     fun stopBuild() = app.buildJob.stop()
+
+    // --- build ETA: learned from this project's last successful build ------------------------
+
+    private val buildPrefs = app.getSharedPreferences("build_history", android.content.Context.MODE_PRIVATE)
+
+    /** (duration ms, Gradle task count) of the last successful build, or null. */
+    fun lastBuild(projectId: Long, android: Boolean): Pair<Long, Int>? {
+        val key = "p${projectId}_${if (android) "apk" else "run"}"
+        val ms = buildPrefs.getLong("${key}_ms", 0)
+        return if (ms > 0) ms to buildPrefs.getInt("${key}_tasks", 0) else null
+    }
+
+    private fun recordBuild(projectId: Long, android: Boolean) {
+        val st = app.buildJob.status.value
+        val started = st.startedAt ?: return
+        val key = "p${projectId}_${if (android) "apk" else "run"}"
+        buildPrefs.edit()
+            .putLong("${key}_ms", System.currentTimeMillis() - started)
+            .putInt("${key}_tasks", app.buildJob.log.value.count { it.startsWith("> Task ") })
+            .apply()
+    }
 
     fun builtApk(): File? = _uiState.value.selectedProject?.let { repo.builtApk(it) }?.takeIf { it.isFile }
 
