@@ -70,6 +70,14 @@ automatically while cross-compiling.
   (changed live with `llama_set_n_threads`, no reload) and GPU + CPU with every layer
   offloaded — then saves and applies whichever generates fastest. Mobile GPUs aren't always
   faster than the CPU for LLMs, so this is measured rather than assumed.
+- **Auto (fit to memory)** — the default GPU-layer setting — calls llama.cpp's
+  `common_fit_params` before loading: as many layers as fit the GPU's free memory go to the
+  GPU, the rest run on the CPU at the same time.
+- **Models → Find models for CPU + GPU** lists the most-downloaded GGUF chat models (or those
+  matching the search box) that fit this phone, choosing for each the best file
+  (`data/hf/DeviceFit.kt`: k-quants first; multi-part, mmproj/draft files and implausibly small
+  files skipped) and showing whether it runs entirely on the GPU or split GPU + CPU.
+  Downloading one switches Chat to GPU + CPU (auto-fit).
 - Threads are big.LITTLE-aware (`CpuTopology`): generation uses the fast cores only
   (4 on Tensor G4: X4 + 3× A720), prompt processing can use all 8.
 - **Max performance** profile = fast cores for generation, all cores for prompts, GPU + CPU

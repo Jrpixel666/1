@@ -6,7 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.llamaaistudio.app.LlamaAiStudioApp
-import com.llamaaistudio.app.data.datastore.ALL_GPU_LAYERS
+import com.llamaaistudio.app.data.datastore.AUTO_GPU_LAYERS
 import com.llamaaistudio.app.data.datastore.ComputeMode
 import com.llamaaistudio.app.data.datastore.PerformanceProfile
 import com.llamaaistudio.app.data.datastore.StudioSettings
@@ -258,8 +258,8 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
             var gpuStats: GenerationStats? = null
             if (_uiState.value.gpu != null) {
-                publish("GPU + CPU · all layers…")
-                val gpuParams = cpuParams.copy(gpuLayers = ALL_GPU_LAYERS, threads = bestThreads)
+                publish("GPU + CPU · auto-fit…")
+                val gpuParams = cpuParams.copy(gpuLayers = AUTO_GPU_LAYERS, threads = bestThreads)
                 val loaded = engine.loadModel(path, gpuParams)
                 if (loaded.isSuccess && loaded.getOrNull()?.onGpu == true) {
                     bench(maxTokens = 8) // warm-up: first GPU run compiles pipelines
@@ -280,7 +280,7 @@ class PerformanceViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             repo.setThreads(bestThreads)
             repo.setThreadsBatch(totalCores)
             repo.setComputeMode(if (useGpu) ComputeMode.GPU_AND_CPU else ComputeMode.CPU_ONLY)
-            if (useGpu) repo.setGpuLayers(ALL_GPU_LAYERS)
+            if (useGpu) repo.setGpuLayers(AUTO_GPU_LAYERS)
 
             publish("Applying the fastest setup…")
             val final = repo.settings.first().loadParams()

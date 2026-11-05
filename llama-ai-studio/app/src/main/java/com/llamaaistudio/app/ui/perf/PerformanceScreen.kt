@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.datastore.ALL_GPU_LAYERS
+import com.llamaaistudio.app.data.datastore.AUTO_GPU_LAYERS
 import com.llamaaistudio.app.data.datastore.ComputeMode
 import com.llamaaistudio.app.data.datastore.PerformanceProfile
 import com.llamaaistudio.app.data.datastore.StudioSettings
@@ -175,6 +176,29 @@ private fun BackendCard(viewModel: PerformanceViewModel, uiState: PerfUiState, s
             )
         }
         if (settings.computeMode == ComputeMode.GPU_AND_CPU && gpu != null) {
+            Spacer(Modifier.height(6.dp))
+            Text("Layers on the GPU", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = settings.gpuLayers == AUTO_GPU_LAYERS,
+                    onClick = { viewModel.setGpuLayers(AUTO_GPU_LAYERS) },
+                    label = { Text("Auto (fit to memory)") },
+                )
+                FilterChip(
+                    selected = settings.gpuLayers != AUTO_GPU_LAYERS,
+                    onClick = { if (settings.gpuLayers == AUTO_GPU_LAYERS) viewModel.setGpuLayers(ALL_GPU_LAYERS) },
+                    label = { Text("Manual") },
+                )
+            }
+            if (settings.gpuLayers == AUTO_GPU_LAYERS) {
+                Text(
+                    "As many layers as fit the GPU's free memory; the rest run on the CPU at the same time.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StudioTextMuted,
+                )
+            }
+        }
+        if (settings.computeMode == ComputeMode.GPU_AND_CPU && gpu != null && settings.gpuLayers != AUTO_GPU_LAYERS) {
             val maxLayers = (info?.nLayer?.plus(1) ?: 33).coerceAtLeast(1)
             val current = if (settings.gpuLayers == ALL_GPU_LAYERS) maxLayers else settings.gpuLayers.coerceIn(1, maxLayers)
             var slider by remember(current, maxLayers) { mutableFloatStateOf(current.toFloat()) }

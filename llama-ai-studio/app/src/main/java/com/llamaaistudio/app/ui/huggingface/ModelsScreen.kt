@@ -1,6 +1,9 @@
 package com.llamaaistudio.app.ui.huggingface
 
 import androidx.compose.foundation.layout.Arrangement
+import com.llamaaistudio.app.data.hf.DeviceFit
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.ui.text.style.TextOverflow
 import com.llamaaistudio.app.ui.cloud.openCodeModelSection
 import androidx.compose.material.icons.filled.Settings
@@ -132,6 +135,7 @@ private fun DiscoverTab(
     val cloud by viewModel.cloud.collectAsStateWithLifecycle()
     val hasKey by viewModel.openCodeHasKey.collectAsStateWithLifecycle()
     val cloudModel by viewModel.cloudChatModel.collectAsStateWithLifecycle()
+    val fit by viewModel.fit.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(hasKey) {
         if (hasKey && !cloud.loaded) viewModel.refreshCloudModels()
     }
@@ -171,6 +175,32 @@ private fun DiscoverTab(
                 }
             }
         }
+        item(key = "fit_button") {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Button(onClick = viewModel::findModelsForCpuGpu, enabled = !fit.searching) {
+                    Icon(Icons.Filled.Memory, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Find models for CPU + GPU")
+                }
+                if (fit.searched || fit.searching) {
+                    TextButton(onClick = viewModel::clearFitResults) { Text("Clear") }
+                }
+            }
+        }
+        if (fit.searching || fit.searched || fit.error != null) {
+            item(key = "fit_header") { DeviceFitHeader(fit) }
+            items(fit.results, key = { "fit_" + it.modelId }) { r ->
+                DeviceFitCard(
+                    result = r,
+                    download = downloads["${r.pick.file.modelId}/${r.pick.file.filename}"],
+                    onDownload = { viewModel.downloadForCpuGpu(r) },
+                    onPause = { viewModel.pauseDownload(r.pick.file) },
+                    onResume = { viewModel.resumeDownload(r.pick.file) },
+                    onCancel = { viewModel.cancelDownload(r.pick.file) },
+                    onMoreFiles = { viewModel.openDetail(r.modelId) },
+                )
+            }
+        }
         if (uiState.isSearching) {
             item(key = "local_loading") { CircularProgressIndicator(modifier = Modifier.padding(16.dp)) }
         }
@@ -198,6 +228,78 @@ private fun DiscoverTab(
             onSelect = viewModel::useCloudModel,
             onRefresh = { viewModel.refreshCloudModels(force = true) },
             onOpenSettings = onOpenSettings,
+        )
+    }
+}
+
+@Composable
+private fun DeviceFitHeader(fit: DeviceFitUiState) {
+    Column(modifier = Modifier.padding(top = 10.dp)) {
+        Text("Runs on your phone · CPU + GPU", style = MaterialTheme.typography.titleSmall, color = StudioOrange)
+        fit.budget?.let { b ->
+            Text(
+                "Memory for the model: ${formatBytes(b.ramBytes)}" +
+                    (if (b.gpuBytes > 0) " · GPU (${fit.gpuName ?: "Vulkan"}): ${formatBytes(b.gpuBytes)}" else " · no usable GPU — CPU only"),
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+        }
+        fit.progress?.let {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        fit.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        if (fit.searched && fit.results.isEmpty()) {
+            Text("Nothing popular fits right now — try a search term like \"1.5B\" or \"4B\" first.", style = MaterialTheme.typography.bodySmall, color = StudioTextMuted)
+        }
+        if (fit.searched && fit.results.isNotEmpty()) {
+            Text(
+                "Downloading one switches Chat to GPU + CPU (auto-fit). Tip: type a search first to narrow it down.",
+                style = MaterialTheme.typography.labelSmall,
+                color = StudioTextMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceFitCard(
+    result: DeviceFitResult,
+    download: com.llamaaistudio.app.data.hf.DownloadState?,
+    onDownload: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onCancel: () -> Unit,
+    onMoreFiles: () -> Unit,
+) {
+    val pick = result.pick
+    Column(modifier = Modifier.padding(top = 8.dp)) {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(result.modelId, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    when (pick.placement) {
+                        DeviceFit.Placement.ALL_ON_GPU -> "All layers on the GPU + CPU threads"
+                        DeviceFit.Placement.SPLIT_GPU_CPU -> "Split: ~${(pick.gpuShare * 100).toInt()}% on the GPU, the rest on the CPU"
+                        DeviceFit.Placement.CPU_ONLY -> "CPU only (no usable GPU)"
+                    } + " · needs ~${formatBytes(pick.neededBytes)} · ${formatCount(result.downloads)} downloads",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (pick.placement == DeviceFit.Placement.ALL_ON_GPU) StudioSuccess else StudioTextMuted,
+                )
+            }
+            TextButton(onClick = onMoreFiles) { Text("Files") }
+        }
+        GgufFileCard(
+            file = pick.file,
+            download = download,
+            recommended = true,
+            onDownload = onDownload,
+            onPause = onPause,
+            onResume = onResume,
+            onCancel = onCancel,
         )
     }
 }

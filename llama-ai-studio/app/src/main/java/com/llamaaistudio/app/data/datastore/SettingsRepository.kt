@@ -25,12 +25,15 @@ enum class ComputeMode { CPU_ONLY, GPU_AND_CPU }
 /** Sentinel for "offload every layer". */
 const val ALL_GPU_LAYERS = -1
 
+/** Sentinel for "as many layers as fit the GPU's free memory; the rest on the CPU". */
+const val AUTO_GPU_LAYERS = -2
+
 data class StudioSettings(
     val threads: Int,
     /** Threads for prompt processing (compute-bound, so it can use the efficiency cores too). */
     val threadsBatch: Int,
     val computeMode: ComputeMode,
-    /** Layers on the GPU in GPU_AND_CPU mode; [ALL_GPU_LAYERS] = all. */
+    /** Layers on the GPU in GPU_AND_CPU mode; [ALL_GPU_LAYERS] = all, [AUTO_GPU_LAYERS] = fit. */
     val gpuLayers: Int,
     val contextLength: Int,
     val profile: PerformanceProfile,
@@ -88,7 +91,7 @@ class SettingsRepository(private val context: Context) {
             threadsBatch = prefs[Keys.THREADS_BATCH] ?: CpuTopology.totalCores,
             computeMode = prefs[Keys.COMPUTE_MODE]?.let { runCatching { ComputeMode.valueOf(it) }.getOrNull() }
                 ?: ComputeMode.CPU_ONLY,
-            gpuLayers = prefs[Keys.GPU_LAYERS] ?: ALL_GPU_LAYERS,
+            gpuLayers = prefs[Keys.GPU_LAYERS] ?: AUTO_GPU_LAYERS,
             contextLength = prefs[Keys.CONTEXT_LENGTH] ?: 4096,
             profile = prefs[Keys.PROFILE]?.let { runCatching { PerformanceProfile.valueOf(it) }.getOrNull() }
                 ?: PerformanceProfile.BALANCED,
@@ -149,7 +152,7 @@ class SettingsRepository(private val context: Context) {
                     it[Keys.THREADS_BATCH] = all
                     it[Keys.CONTEXT_LENGTH] = 8192
                     it[Keys.COMPUTE_MODE] = (if (gpuAvailable) ComputeMode.GPU_AND_CPU else ComputeMode.CPU_ONLY).name
-                    it[Keys.GPU_LAYERS] = ALL_GPU_LAYERS
+                    it[Keys.GPU_LAYERS] = AUTO_GPU_LAYERS
                 }
             }
         }

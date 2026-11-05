@@ -12,6 +12,17 @@ interface HfApi {
         @Query("limit") limit: Int = 30,
     ): List<HfModelSummary>
 
+    /** Most-downloaded GGUF chat models (optionally matching [search]). */
+    @GET("api/models")
+    suspend fun listPopularGguf(
+        @Query("search") search: String? = null,
+        @Query("filter") filter: String = "gguf",
+        @Query("pipeline_tag") pipelineTag: String = "text-generation",
+        @Query("sort") sort: String = "downloads",
+        @Query("direction") direction: Int = -1,
+        @Query("limit") limit: Int = 40,
+    ): List<HfModelSummary>
+
     @GET("api/models/{id}")
     suspend fun getModelDetail(
         @Path("id", encoded = true) id: String,

@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.llamaaistudio.app.LlamaAiStudioApp
 import com.llamaaistudio.app.data.cloud.CloudModel
+import com.llamaaistudio.app.data.hf.DeviceFit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withPermit
 import com.llamaaistudio.app.data.db.LocalModelEntity
 import com.llamaaistudio.app.data.hf.GgufFileOption
 import com.llamaaistudio.app.data.hf.HfModelDetail
@@ -25,6 +29,19 @@ data class ModelsUiState(
     val isLoadingDetail: Boolean = false,
     val error: String? = null,
 )
+
+/** "Runs on your CPU + GPU" search results. */
+data class DeviceFitUiState(
+    val searching: Boolean = false,
+    val progress: String? = null,
+    val budget: DeviceFit.Budget? = null,
+    val gpuName: String? = null,
+    val results: List<DeviceFitResult> = emptyList(),
+    val searched: Boolean = false,
+    val error: String? = null,
+)
+
+data class DeviceFitResult(val modelId: String, val downloads: Long, val pick: DeviceFit.Pick)
 
 data class CloudUiState(
     val query: String = "",
@@ -52,6 +69,78 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
             emptyList(),
         )
     val engineState = app.llamaEngine.state
+
+    // --- "Find models for CPU + GPU" ---------------------------------------------------------
+
+    private val _fit = MutableStateFlow(DeviceFitUiState())
+    val fit: StateFlow<DeviceFitUiState> = _fit
+    private var fitJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Searches the most-downloaded GGUF chat models (matching the search box, if filled) and
+     * keeps the ones that fit this phone, choosing for each the best file for GPU + CPU.
+     */
+    fun findModelsForCpuGpu() {
+        fitJob?.cancel()
+        fitJob = viewModelScope.launch {
+            _fit.value = DeviceFitUiState(searching = true, progress = "Checking your phone…")
+            val settings = app.settingsRepository.settings.first()
+            val gpu = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                com.llamaaistudio.app.engine.LlamaEngine.devices().firstOrNull { it.isGpu }
+            }
+            val total = app.modelRepository.totalMemoryBytes()
+            val avail = app.modelRepository.availableMemoryBytes()
+            // Leave room for Android and other apps; the GPU shares the same RAM.
+            val ram = minOf((total * 0.6).toLong(), (avail * 0.85).toLong())
+            val gpuBytes = when {
+                gpu == null -> 0L
+                gpu.memoryFree > 0 -> minOf(gpu.memoryFree - 768L * 1024 * 1024, ram).coerceAtLeast(0)
+                else -> (ram * 0.75).toLong()
+            }
+            val budget = DeviceFit.Budget(ram, gpuBytes, settings.contextLength.coerceAtMost(8192))
+            _fit.value = _fit.value.copy(budget = budget, gpuName = gpu?.description?.ifBlank { gpu.name }, progress = "Searching Hugging Face…")
+
+            val query = _uiState.value.query.trim().ifEmpty { null }
+            val listed = runCatching { app.hfApi.listPopularGguf(search = query) }.getOrElse {
+                _fit.value = _fit.value.copy(searching = false, progress = null, error = "Search failed: ${it.message}")
+                return@launch
+            }
+            val semaphore = kotlinx.coroutines.sync.Semaphore(6)
+            var checked = 0
+            val results = kotlinx.coroutines.coroutineScope {
+                listed.map { summary ->
+                    async {
+                        semaphore.withPermit {
+                            val detail = runCatching { app.hfApi.getModelDetail(summary.id) }.getOrNull()
+                            checked++
+                            _fit.value = _fit.value.copy(progress = "Checking models $checked/${listed.size}…")
+                            detail?.let { d -> DeviceFit.pick(d.ggufFiles(), budget)?.let { DeviceFitResult(summary.id, summary.downloads ?: 0, it) } }
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            val sorted = results.sortedWith(
+                compareBy<DeviceFitResult> { it.pick.placement.ordinal }.thenByDescending { it.downloads }
+            ).take(25)
+            _fit.value = _fit.value.copy(searching = false, progress = null, results = sorted, searched = true)
+        }
+    }
+
+    /** Downloads a recommended file and sets Chat to run on GPU + CPU (auto-fit) when a GPU exists. */
+    fun downloadForCpuGpu(result: DeviceFitResult) {
+        download(result.pick.file)
+        if (result.pick.placement != DeviceFit.Placement.CPU_ONLY) {
+            viewModelScope.launch {
+                app.settingsRepository.setComputeMode(com.llamaaistudio.app.data.datastore.ComputeMode.GPU_AND_CPU)
+                app.settingsRepository.setGpuLayers(com.llamaaistudio.app.data.datastore.AUTO_GPU_LAYERS)
+            }
+        }
+    }
+
+    fun clearFitResults() {
+        fitJob?.cancel()
+        _fit.value = DeviceFitUiState()
+    }
 
     // --- OpenCode (free cloud models) ------------------------------------------------------
 

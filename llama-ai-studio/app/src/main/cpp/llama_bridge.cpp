@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "fit.h"
 #include "ggml-backend.h"
 #include "llama.h"
 #include "jni_utils.h"
@@ -178,21 +179,22 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
         jint nThreadsBatch, jint nGpuLayers, jboolean useMmap, jboolean useMlock) {
     std::string modelPath = jstringToUtf8(env, jModelPath);
 
-    llama_model_params mparams = llama_model_default_params();
-    // nGpuLayers: 0 = CPU only, N = offload N layers to the GPU (Vulkan), < 0 = all layers.
+    // nGpuLayers: 0 = CPU only, N = offload N layers to the GPU (Vulkan), -1 = all layers,
+    // -2 = auto: llama.cpp's fitter offloads as many layers as fit the GPU's free memory and
+    // keeps the rest on the CPU (GPU + CPU at the same time).
     const bool useGpu = nGpuLayers != 0 && hasGpuDevice();
-    mparams.n_gpu_layers = useGpu ? (nGpuLayers < 0 ? 999 : nGpuLayers) : 0;
-    if (!useGpu) mparams.devices = g_noDevices;
+    const bool autoFit = useGpu && nGpuLayers == -2;
+
+    llama_model_params mparams = llama_model_default_params();
+    if (useGpu && !autoFit) mparams.n_gpu_layers = nGpuLayers < 0 ? 999 : nGpuLayers;
+    if (!useGpu) {
+        mparams.n_gpu_layers = 0;
+        mparams.devices = g_noDevices;
+    }
     if (useMlock) {
         mparams.load_mode = useMmap ? LLAMA_LOAD_MODE_MMAP_MLOCK : LLAMA_LOAD_MODE_MLOCK;
     } else {
         mparams.load_mode = useMmap ? LLAMA_LOAD_MODE_MMAP : LLAMA_LOAD_MODE_NONE;
-    }
-
-    llama_model *model = llama_model_load_from_file(modelPath.c_str(), mparams);
-    if (model == nullptr) {
-        llamaLogError("Failed to load model from %s", modelPath.c_str());
-        return 0;
     }
 
     llama_context_params cparams = llama_context_default_params();
@@ -205,6 +207,29 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
     cparams.offload_kqv = useGpu; // KV cache on the GPU only when layers are there too
     cparams.op_offload = useGpu;
 
+    // Must outlive llama_model_load_from_file: the fitter points mparams at these.
+    std::vector<float> tensorSplit(llama_max_devices(), 0.0f);
+    std::vector<llama_model_tensor_buft_override> overrides(llama_max_tensor_buft_overrides(), {nullptr, nullptr});
+    std::vector<size_t> margins(llama_max_devices(), (size_t) 768 * 1024 * 1024); // headroom per device
+    if (autoFit) {
+        auto status = common_fit_params(modelPath.c_str(), &mparams, &cparams, tensorSplit.data(),
+                                        overrides.data(), margins.data(), cparams.n_ctx, nullptr,
+                                        GGML_LOG_LEVEL_ERROR);
+        llamaLogInfo("auto-fit status %d -> n_gpu_layers=%d", (int) status, mparams.n_gpu_layers);
+        if (status == COMMON_PARAMS_FIT_STATUS_ERROR) {
+            mparams.n_gpu_layers = 0; // couldn't even read the model: fall back to CPU
+            mparams.devices = g_noDevices;
+            cparams.offload_kqv = false;
+            cparams.op_offload = false;
+        }
+    }
+
+    llama_model *model = llama_model_load_from_file(modelPath.c_str(), mparams);
+    if (model == nullptr) {
+        llamaLogError("Failed to load model from %s", modelPath.c_str());
+        return 0;
+    }
+
     llama_context *ctx = llama_init_from_model(model, cparams);
     if (ctx == nullptr) {
         llamaLogError("Failed to create context for %s", modelPath.c_str());
@@ -213,7 +238,9 @@ Java_com_llamaaistudio_app_engine_LlamaNative_loadModel(
     }
 
     auto *session = new Session();
-    session->gpuLayersRequested = mparams.n_gpu_layers;
+    // -1 (all, possibly left untouched by the fitter) is reported as "every layer".
+    session->gpuLayersRequested = mparams.devices == g_noDevices ? 0
+        : (mparams.n_gpu_layers < 0 ? 999 : mparams.n_gpu_layers);
     session->model = model;
     session->ctx = ctx;
     session->vocab = llama_model_get_vocab(model);

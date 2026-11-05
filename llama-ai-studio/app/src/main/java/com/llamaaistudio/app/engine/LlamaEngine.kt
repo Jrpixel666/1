@@ -28,7 +28,7 @@ data class ModelLoadParams(
     val batchSize: Int = 512,
     val threads: Int = CpuTopology.performanceCores,
     val threadsBatch: Int = threads,
-    /** 0 = CPU only, N = N layers on the GPU, < 0 = all layers. */
+    /** 0 = CPU only, N = N layers on the GPU, -1 = all layers, -2 = auto-fit to GPU memory. */
     val gpuLayers: Int = 0,
     val useMmap: Boolean = true,
     val useMlock: Boolean = false,

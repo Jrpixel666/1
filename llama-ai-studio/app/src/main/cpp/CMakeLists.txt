@@ -51,6 +51,12 @@ endif()
 
 add_subdirectory(${LLAMA_SRC} llama_build)
 
+if (TARGET llama-common)
+    # The app-wide -fvisibility=hidden (cppFlags) would hide every llama-common symbol, but the
+    # bridge calls common_fit_params (GPU + CPU auto-fit) from it. Later flag wins.
+    target_compile_options(llama-common PRIVATE -fvisibility=default)
+endif()
+
 if (TARGET ggml-vulkan)
     # Upstream expects SPIRV-Headers on the Vulkan SDK include path; we vendor them separately.
     target_include_directories(ggml-vulkan PRIVATE ${VULKAN_THIRD_PARTY}/SPIRV-Headers/include)
