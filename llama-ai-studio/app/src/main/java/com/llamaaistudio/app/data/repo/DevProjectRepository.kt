@@ -125,6 +125,14 @@ class DevProjectRepository(
                         line.value + "\n    id(\"org.jetbrains.kotlin.plugin.compose\") version \"${line.groupValues[1]}\" apply false"))
                 }
             }
+            // AI-written strings often have stray backslashes / bare apostrophes that aapt2 rejects.
+            File(root, "app/src/main/res").listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { dir ->
+                dir.listFiles { f -> f.extension == "xml" }?.forEach { f ->
+                    val t = f.readText()
+                    val fixed = StringsXmlFixer.fix(t)
+                    if (fixed != t) f.writeText(fixed)
+                }
+            }
             // AppCompatActivity crashes at launch without an AppCompat theme.
             val manifest = File(root, "app/src/main/AndroidManifest.xml")
             if (manifest.isFile) {
