@@ -216,10 +216,10 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     /** What Dev Studio will use: its own OpenCode model, else whatever Chat uses. */
     fun codeSourceLabel(): String =
-        app.openCode.codeModel.value?.takeIf { app.openCode.hasKey.value }?.let { "OpenCode · ${it.name}" } ?: app.ai.sourceLabel
+        app.openCode.codeModel.value?.takeIf { app.openCode.ready.value }?.let { "OpenCode · ${it.name}" } ?: app.ai.sourceLabel
 
     private fun codeAi(): CodeAi = object : CodeAi {
-        private val sel = app.openCode.codeModel.value?.takeIf { app.openCode.hasKey.value }
+        private val sel = app.openCode.codeModel.value?.takeIf { app.openCode.ready.value }
         override val label = codeSourceLabel()
         override val largeContext = sel != null || app.ai.cloudModelName != null
         override suspend fun complete(system: String, user: String, maxTokens: Int): Result<String> {
@@ -330,7 +330,7 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     private fun builderReady(project: DevProjectEntity): Boolean = when {
         !repo.isAndroidApp(project) -> { setStatus("Project Builder makes Android apps — create an Android project."); false }
-        !app.ai.isAvailable && !(app.openCode.hasKey.value && app.openCode.codeModel.value != null) ->
+        !app.ai.isAvailable && !(app.openCode.codeModel.value != null) ->
             { setStatus("Pick a model in the AI model card first — OpenCode is best for big projects."); false }
         else -> true
     }

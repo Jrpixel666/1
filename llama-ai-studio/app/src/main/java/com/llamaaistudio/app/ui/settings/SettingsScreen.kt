@@ -116,9 +116,9 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text("OpenCode", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Text(
-                        "Use OpenCode Zen's free cloud models for Chat, Web/Dev Studio and the Image assistant. " +
-                            "Only free models are offered. Your key is encrypted on this phone (Android Keystore) " +
-                            "and only sent to opencode.ai.",
+                        "OpenCode Zen's free cloud models work for Chat, Web/Dev Studio and the Image assistant " +
+                            "without a key (OpenCode limits free use). A key is only needed for OpenCode Go or paid " +
+                            "models; it's encrypted on this phone (Android Keystore) and only sent to opencode.ai.",
                         style = MaterialTheme.typography.bodySmall,
                         color = StudioTextMuted,
                     )
@@ -132,7 +132,7 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                         onValueChange = { keyInput = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text(if (hasKey) "Replace API key" else "API key") },
+                        label = { Text(if (hasKey) "Replace API key" else "API key (optional — OpenCode Go)") },
                         placeholder = { Text("Paste your OpenCode API key") },
                         visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),

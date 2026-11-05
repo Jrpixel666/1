@@ -152,7 +152,7 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     // --- AI assistant (OpenCode vision model) + image editing --------------------------------
 
-    val openCodeHasKey = app.openCode.hasKey
+    val openCodeHasKey = app.openCode.ready
     val visionModel = app.openCode.visionModel
 
     private val _cloud = MutableStateFlow(com.llamaaistudio.app.ui.huggingface.CloudUiState())
@@ -181,7 +181,7 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     /** Can the AI help write prompts? (vision assistant, or any chat model) */
     val assistantAvailable: Boolean
-        get() = (app.openCode.hasKey.value && app.openCode.visionModel.value != null) || app.ai.isAvailable
+        get() = (app.openCode.ready.value && app.openCode.visionModel.value != null) || app.ai.isAvailable
 
     /** Rewrites a rough idea into a detailed Stable Diffusion prompt + negative prompt. */
     fun improvePrompt(idea: String, onResult: (PromptSuggestion) -> Unit) {
@@ -221,7 +221,7 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
                 return@launch
             }
 
-            val vision = app.openCode.visionModel.value?.takeIf { app.openCode.hasKey.value }
+            val vision = app.openCode.visionModel.value?.takeIf { app.openCode.ready.value }
             val suggestion = if (vision != null) {
                 _uiState.value = _uiState.value.copy(assistantStatus = "Asking ${vision.name} how to edit it…")
                 val messages = listOf(
@@ -273,7 +273,7 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     }
 
     private suspend fun askAssistant(messages: List<com.llamaaistudio.app.engine.ChatTurn>, image: ByteArray?): Result<String> {
-        val vision = app.openCode.visionModel.value?.takeIf { app.openCode.hasKey.value }
+        val vision = app.openCode.visionModel.value?.takeIf { app.openCode.ready.value }
         if (vision != null) return app.openCode.complete(vision.id, messages, imageJpeg = image)
         if (!app.ai.isAvailable) return Result.failure(IllegalStateException("pick an Image assistant or a chat model first"))
         val sb = StringBuilder()

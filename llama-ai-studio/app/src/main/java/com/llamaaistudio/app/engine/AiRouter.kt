@@ -14,7 +14,7 @@ class AiRouter(
 ) {
     /** The cloud model in use, or null when the local model is used. */
     val cloudModelName: String?
-        get() = cloud.chatModel.value?.takeIf { cloud.hasKey.value }?.name
+        get() = cloud.chatModel.value?.takeIf { cloud.ready.value }?.name
 
     val isAvailable: Boolean
         get() = cloudModelName != null || local.isLoaded || liteRt.isLoaded
@@ -28,7 +28,7 @@ class AiRouter(
     fun generate(messages: List<ChatTurn>, params: GenerationParams = GenerationParams()): Flow<GenerationEvent> {
         val sel = cloud.chatModel.value
         return when {
-            sel != null && cloud.hasKey.value -> cloud.chat(sel.id, messages, params)
+            sel != null && cloud.ready.value -> cloud.chat(sel.id, messages, params)
             liteRt.isLoaded -> liteRt.generate(messages, params)
             else -> local.generate(messages, params)
         }
@@ -36,5 +36,5 @@ class AiRouter(
 
     /** Where a chat session's reply came from, stored on the session ("opencode:<id>" or a GGUF path). */
     fun currentModelTag(): String? =
-        cloud.chatModel.value?.takeIf { cloud.hasKey.value }?.let { "opencode:${it.id}" } ?: liteRt.loaded?.path ?: local.currentModelPath()
+        cloud.chatModel.value?.takeIf { cloud.ready.value }?.let { "opencode:${it.id}" } ?: liteRt.loaded?.path ?: local.currentModelPath()
 }

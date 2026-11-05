@@ -664,51 +664,56 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
     var key by remember { mutableStateOf("") }
     var paid by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(hasKey, paid) { if (hasKey) viewModel.loadCodeModels(paid) }
+    androidx.compose.runtime.LaunchedEffect(hasKey, paid) { viewModel.loadCodeModels(paid && hasKey) }
     Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("AI model", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
             Text("Used by Project Builder and Build with AI: ${viewModel.codeSourceLabel()}",
                 style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
             Spacer(Modifier.height(6.dp))
-            if (!hasKey) {
-                Text("OpenCode API key (get one at opencode.ai/auth):", style = MaterialTheme.typography.labelMedium)
-                OutlinedTextField(
-                    value = key, onValueChange = { key = it }, modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("sk-…") }, singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                )
-                Button(onClick = { viewModel.saveOpenCodeKey(key); key = "" }, enabled = key.isNotBlank()) { Text("Save key") }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { viewModel.clearOpenCodeKey() }) { Text("Remove key") }
+            Box {
+                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(selected?.name ?: "Same as Chat (${if (models.isEmpty()) "loading models…" else "tap to choose"})")
                 }
-                Box {
-                    OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(selected?.name ?: "Same as Chat (${if (models.isEmpty()) "loading models…" else "tap to choose"})")
-                    }
-                    androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Same as Chat / on-device") },
+                        onClick = { viewModel.selectCodeModel(null); open = false },
+                    )
+                    models.forEach { m ->
                         androidx.compose.material3.DropdownMenuItem(
-                            text = { Text("Same as Chat / on-device") },
-                            onClick = { viewModel.selectCodeModel(null); open = false },
+                            text = {
+                                Column {
+                                    Text(m.name + if (m.free) "  · free" else "")
+                                    if (m.contextLength > 0) Text("${m.contextLength / 1000}k context", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+                                }
+                            },
+                            onClick = { viewModel.selectCodeModel(m); open = false },
                         )
-                        models.forEach { m ->
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(m.name + if (m.free) "  · free" else "")
-                                        if (m.contextLength > 0) Text("${m.contextLength / 1000}k context", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
-                                    }
-                                },
-                                onClick = { viewModel.selectCodeModel(m); open = false },
-                            )
-                        }
                     }
+                }
+            }
+            Text("Free models work without a key (OpenCode limits free use per day).",
+                style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            if (hasKey) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("OpenCode Go key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { viewModel.clearOpenCodeKey() }) { Text("Remove") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(checked = paid, onCheckedChange = { paid = it })
                     Text("Include paid models (billed to your OpenCode account)", style = MaterialTheme.typography.labelSmall)
+                }
+            } else {
+                var showKey by remember { mutableStateOf(false) }
+                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Have OpenCode Go? Add your key") }
+                if (showKey) {
+                    OutlinedTextField(
+                        value = key, onValueChange = { key = it }, modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("sk-…") }, singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    )
+                    Button(onClick = { viewModel.saveOpenCodeKey(key); key = "" }, enabled = key.isNotBlank()) { Text("Save key") }
                 }
             }
             Spacer(Modifier.height(8.dp))

@@ -102,7 +102,7 @@ fun ChatScreen(app: LlamaAiStudioApp, onOpenSessions: () -> Unit = {}) {
 
     val currentSession = uiState.currentSession
     val cloudModel by app.openCode.chatModel.collectAsStateWithLifecycle()
-    val hasCloudKey by app.openCode.hasKey.collectAsStateWithLifecycle()
+    val hasCloudKey by app.openCode.ready.collectAsStateWithLifecycle()
     val cloudName = cloudModel?.takeIf { hasCloudKey }?.name
     val streamingHere = uiState.isGenerating && uiState.generatingSessionId == uiState.currentSessionId
 

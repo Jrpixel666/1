@@ -153,7 +153,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
 
     // --- OpenCode (free cloud models) ------------------------------------------------------
 
-    val openCodeHasKey = app.openCode.hasKey
+    val openCodeHasKey = app.openCode.ready
     val cloudChatModel = app.openCode.chatModel
 
     private val _cloud = MutableStateFlow(CloudUiState())

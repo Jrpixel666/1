@@ -60,6 +60,12 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
     private val _hasKey = MutableStateFlow(keys.get(KEY_NAME) != null)
     val hasKey: StateFlow<Boolean> = _hasKey
 
+    /**
+     * OpenCode's free models work without a key (rate-limited per connection); a key is only
+     * needed for OpenCode Go / paid models. So the cloud is always usable.
+     */
+    val ready: StateFlow<Boolean> = MutableStateFlow(true)
+
     private val _chatModel = MutableStateFlow(loadSelection("chat"))
     /** Cloud model used by Chat, or null = use the local (on-device) model. */
     val chatModel: StateFlow<CloudSelection?> = _chatModel
@@ -160,19 +166,12 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
         params: GenerationParams = GenerationParams(),
         imageJpeg: ByteArray? = null,
     ): Flow<GenerationEvent> = callbackFlow {
-        val key = keys.get(KEY_NAME)
-        if (key == null) {
-            trySend(GenerationEvent.Failed("Add your OpenCode API key in Settings first"))
-            close()
-            awaitClose { }
-            return@callbackFlow
-        }
         val baseUrl = cachedModels?.firstOrNull { it.id == modelId }?.chatBaseUrl ?: DEFAULT_CHAT_BASE
         val body = buildChatBody(modelId, messages, params, imageJpeg)
         val call = client.newCall(
             Request.Builder()
                 .url(baseUrl.trimEnd('/') + "/chat/completions")
-                .header("Authorization", "Bearer $key")
+                .apply { authHeader()?.let { header("Authorization", it) } }
                 .header("Accept", "text/event-stream")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
