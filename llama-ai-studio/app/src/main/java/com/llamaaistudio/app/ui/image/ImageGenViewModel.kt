@@ -167,7 +167,7 @@ class ImageGenViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         if (_cloud.value.loading) return
         viewModelScope.launch {
             _cloud.value = _cloud.value.copy(loading = true, error = null)
-            val result = runCatching { app.openCode.freeModels(force = force, imagesOnly = true) }
+            val result = runCatching { app.openCode.models(force = force, imagesOnly = true) }
             _cloud.value = _cloud.value.copy(
                 loading = false,
                 loaded = result.isSuccess || _cloud.value.loaded,

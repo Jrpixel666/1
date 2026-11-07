@@ -252,7 +252,7 @@ private fun DiscoverTab(
 
         // 3) OpenCode free cloud models
         openCodeModelSection(
-            title = "Cloud · free models (OpenRouter / OpenCode)",
+            title = "Cloud models (OpenRouter / OpenCode)",
             subtitle = "Cloud models from opencode.ai with your API key — only free ones are shown",
             hasKey = hasKey,
             query = cloud.query,

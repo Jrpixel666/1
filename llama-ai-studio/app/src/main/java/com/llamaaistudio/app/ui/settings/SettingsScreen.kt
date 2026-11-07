@@ -117,8 +117,8 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                     Text("Cloud models (OpenRouter / OpenCode)", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Text(
                         "Free cloud models for Chat, Web/Dev Studio and the Image assistant. Paste an OpenRouter key " +
-                            "(sk-or-…, from openrouter.ai/keys) to use OpenRouter's free models; without a key, OpenCode " +
-                            "Zen's free models are used. The key is encrypted on this phone (Android Keystore) and only " +
+                            "(sk-or-…, from openrouter.ai/keys) to use OpenRouter's models (free and paid); without a key, " +
+                            "OpenCode Zen's models are used — free ones need no key. The key is encrypted on this phone (Android Keystore) and only " +
                             "sent to that service. Now using: ${openCode.providerName}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = StudioTextMuted,

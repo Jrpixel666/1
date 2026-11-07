@@ -168,7 +168,7 @@ class ModelsViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         if (_cloud.value.loading) return
         viewModelScope.launch {
             _cloud.value = _cloud.value.copy(loading = true, error = null)
-            val result = runCatching { app.openCode.freeModels(force = force) }
+            val result = runCatching { app.openCode.models(force = force) }
             _cloud.value = _cloud.value.copy(
                 loading = false,
                 models = result.getOrDefault(_cloud.value.models),

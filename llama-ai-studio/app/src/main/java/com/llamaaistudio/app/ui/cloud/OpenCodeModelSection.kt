@@ -52,7 +52,7 @@ fun LazyListScope.openCodeModelSection(
     onSelect: (CloudModel) -> Unit,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
-    emptyText: String = "No free models match.",
+    emptyText: String = "No models match.",
 ) {
     item(key = "oc_header") {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
@@ -84,7 +84,7 @@ fun LazyListScope.openCodeModelSection(
             value = query,
             onValueChange = onQueryChange,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            placeholder = { Text("Search free OpenCode models…") },
+            placeholder = { Text("Search cloud models…") },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             singleLine = true,
         )
@@ -107,12 +107,12 @@ fun LazyListScope.openCodeModelSection(
                     Text(m.name, style = MaterialTheme.typography.bodyLarge)
                     Text(
                         buildString {
-                            append("Free")
+                            append(if (m.free) "Free" else "Paid")
                             if (m.contextLength > 0) append(" · ${m.contextLength / 1024}K context")
                             if (m.acceptsImages) append(" · sees images")
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = StudioSuccess,
+                        color = if (m.free) StudioSuccess else StudioOrange,
                     )
                     if (m.description.isNotBlank()) {
                         Text(

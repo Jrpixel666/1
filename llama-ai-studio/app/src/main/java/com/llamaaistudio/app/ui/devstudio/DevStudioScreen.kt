@@ -662,9 +662,8 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
     val models by viewModel.codeModels.collectAsStateWithLifecycle()
     val msg by viewModel.modelMessage.collectAsStateWithLifecycle()
     var key by remember { mutableStateOf("") }
-    var paid by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(hasKey, paid) { viewModel.loadCodeModels(paid && hasKey) }
+    androidx.compose.runtime.LaunchedEffect(hasKey) { viewModel.loadCodeModels(true) }
     Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StudioPanel)) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("AI model", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
@@ -684,7 +683,7 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text(m.name + if (m.free) "  · free" else "")
+                                    Text(m.name + if (m.free) "  · free" else "  · paid")
                                     if (m.contextLength > 0) Text("${m.contextLength / 1000}k context", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
                                 }
                             },
@@ -693,16 +692,12 @@ private fun CodeModelCard(viewModel: DevStudioViewModel) {
                     }
                 }
             }
-            Text("OpenRouter: paste your sk-or- key (free models need one). OpenCode: free models work without a key.",
+            Text("Free and paid models are listed; paid ones bill your account. OpenRouter needs your sk-or- key; OpenCode's free models work without one.",
                 style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
             if (hasKey) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("${viewModel.cloudProvider()} key ${viewModel.maskedOpenCodeKey() ?: ""}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { viewModel.clearOpenCodeKey() }) { Text("Remove") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.Checkbox(checked = paid, onCheckedChange = { paid = it })
-                    Text("Include paid models (billed to your account)", style = MaterialTheme.typography.labelSmall)
                 }
             } else {
                 var showKey by remember { mutableStateOf(false) }

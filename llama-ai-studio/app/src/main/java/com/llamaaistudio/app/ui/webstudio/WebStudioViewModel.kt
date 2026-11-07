@@ -188,7 +188,7 @@ class WebStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
         val project = _uiState.value.selectedProject ?: return
         if (idea.isBlank() || _uiState.value.isGenerating) return
         if (!app.ai.isAvailable) {
-            _uiState.update { it.copy(status = "Pick a model in the Models tab first — a local GGUF or a free OpenCode model") }
+            _uiState.update { it.copy(status = "Pick a model in the Models tab first — a local GGUF or a cloud model") }
             return
         }
         genJob = viewModelScope.launch {

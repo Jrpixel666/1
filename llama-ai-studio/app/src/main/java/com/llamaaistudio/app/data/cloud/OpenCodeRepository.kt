@@ -80,12 +80,6 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
         _codeModel.value = sel
     }
 
-    /** Every chat-completions model, including paid ones (billed to the user's key). */
-    suspend fun allModels(force: Boolean = false): List<CloudModel> {
-        val all = cachedModels?.takeUnless { force } ?: fetchModels().also { cachedModels = it }
-        return all.filter { it.usable }
-    }
-
     private val _visionModel = MutableStateFlow(loadSelection("vision"))
     /** Free vision model the Image workspace uses to understand pictures / write prompts. */
     val visionModel: StateFlow<CloudSelection?> = _visionModel
@@ -154,10 +148,13 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
 
     // --- catalogue ---------------------------------------------------------------------------
 
-    /** Free, chat-completions-capable models (optionally only those that accept images). */
-    suspend fun freeModels(force: Boolean = false, imagesOnly: Boolean = false): List<CloudModel> {
+    /**
+     * Every chat-completions-capable model, free and paid (paid ones are billed to the user's
+     * account), free first. Optionally only those that accept images.
+     */
+    suspend fun models(force: Boolean = false, imagesOnly: Boolean = false): List<CloudModel> {
         val all = cachedModels?.takeUnless { force } ?: fetchModels().also { cachedModels = it }
-        return all.filter { it.free && it.usable && (!imagesOnly || it.acceptsImages) }
+        return all.filter { it.usable && (!imagesOnly || it.acceptsImages) }.sortedBy { !it.free }
     }
 
     private suspend fun fetchModels(): List<CloudModel> = withContext(Dispatchers.IO) {
@@ -267,7 +264,7 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
 
     /** Quick check that the key works with a free model. */
     suspend fun testKey(): Result<String> {
-        val model = runCatching { freeModels(force = true).firstOrNull() }.getOrNull()
+        val model = runCatching { models(force = true).firstOrNull { it.free } }.getOrNull()
             ?: return Result.failure(IOException("Couldn't load $providerName's model list"))
         return complete(model.id, listOf(ChatTurn("user", "Reply with exactly: OK")), GenerationParams(maxTokens = 400, temperature = 0f))
             .map { reply -> "${model.name} replied: ${reply.take(60).ifBlank { "(empty)" }}" }
@@ -449,8 +446,9 @@ class OpenCodeRepository(context: Context, httpClient: OkHttpClient) {
             val msg = runCatching { JSONObject(text).optJSONObject("error")?.optString("message") }.getOrNull()
             return when {
                 !msg.isNullOrBlank() -> msg
+                resp.code == 402 -> "Not enough credit (402) — paid models need credit on your account; pick a free model or top up"
                 resp.code == 401 -> "The cloud API rejected the key (401) — check it in Settings"
-                resp.code == 429 -> "Rate limited (429) — free models allow a limited number of requests; wait a bit or use Slow speed"
+                resp.code == 429 -> "Rate limited (429) — too many requests (free models are limited); wait a bit or use Slow speed"
                 else -> "Cloud error ${resp.code}"
             }
         }

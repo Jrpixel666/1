@@ -207,8 +207,8 @@ class DevStudioViewModel(private val app: LlamaAiStudioApp) : ViewModel() {
     fun loadCodeModels(includePaid: Boolean) {
         viewModelScope.launch {
             _codeModels.value = runCatching {
-                (if (includePaid) app.openCode.allModels() else app.openCode.freeModels())
-                    .sortedByDescending { it.contextLength }
+                app.openCode.models()
+                    .sortedWith(compareBy<com.llamaaistudio.app.data.cloud.CloudModel> { !it.free }.thenByDescending { it.contextLength })
             }.getOrElse { _modelMsg.value = "Couldn't load models: ${it.message}"; emptyList() }
         }
     }

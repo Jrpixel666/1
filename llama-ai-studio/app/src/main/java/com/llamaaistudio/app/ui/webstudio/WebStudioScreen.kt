@@ -339,7 +339,7 @@ private fun BuildCard(viewModel: WebStudioViewModel, uiState: WebStudioUiState) 
             Button(onClick = { viewModel.generateWithAi(idea) }, enabled = idea.isNotBlank()) { Text("Build it") }
             if (!viewModel.modelLoaded) {
                 Text(
-                    "No model yet — in Models, load a local GGUF or pick a free OpenCode model (coding models do best).",
+                    "No model yet — in Models, load a local GGUF or pick a cloud model (coding models do best).",
                     style = MaterialTheme.typography.labelSmall,
                     color = StudioError,
                     modifier = Modifier.padding(top = 6.dp),
