@@ -9,8 +9,6 @@ import com.llamaaistudio.app.data.hf.HfApi
 import com.llamaaistudio.app.data.hf.ModelDownloadManager
 import com.llamaaistudio.app.data.repo.ChatRepository
 import com.llamaaistudio.app.data.repo.DevProjectRepository
-import com.llamaaistudio.app.data.repo.ImageGalleryRepository
-import com.llamaaistudio.app.data.repo.ImageModelRepository
 import com.llamaaistudio.app.data.repo.ModelRepository
 import com.llamaaistudio.app.data.repo.WebProjectRepository
 import com.llamaaistudio.app.engine.AiRouter
@@ -23,7 +21,6 @@ import com.llamaaistudio.app.linux.LinuxJob
 import com.llamaaistudio.app.linux.LinuxTerminal
 import com.llamaaistudio.app.webserver.BackgroundWorkService
 import com.llamaaistudio.app.webserver.LocalWebServer
-import com.llamaaistudio.imagegen.ImageGenEngine
 import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -150,17 +147,9 @@ class LlamaAiStudioApp : Application() {
     lateinit var devProjectRepository: DevProjectRepository
         private set
 
-    lateinit var imageGenEngine: ImageGenEngine
-        private set
 
-    lateinit var imageModelRepository: ImageModelRepository
-        private set
 
-    lateinit var imageDownloadManager: ModelDownloadManager
-        private set
 
-    lateinit var imageGalleryRepository: ImageGalleryRepository
-        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -181,7 +170,7 @@ class LlamaAiStudioApp : Application() {
         linuxTerminal = LinuxTerminal(linux)
         nodeJob = LinuxJob(linux, "node")
         buildJob = LinuxJob(linux, "build")
-        downloadManager = ModelDownloadManager(modelRepository.modelsDir, { file, meta, sha, verified ->
+        downloadManager = ModelDownloadManager({ modelRepository.modelsDir }, { file, meta, sha, verified ->
             modelRepository.registerModel(
                 file = file,
                 displayName = meta.filename.removeSuffix(".gguf"),
@@ -197,20 +186,8 @@ class LlamaAiStudioApp : Application() {
         devProjectRepository = DevProjectRepository(this, database.devProjectDao())
         webProjectRepository = WebProjectRepository(this, database.webProjectDao())
 
-        imageGenEngine = ImageGenEngine()
-        imageModelRepository = ImageModelRepository(this, database.imageModelDao())
-        imageDownloadManager = ModelDownloadManager(imageModelRepository.modelsDir, { file, meta, sha, verified ->
-            imageModelRepository.registerModel(
-                file = file,
-                displayName = meta.filename.removeSuffix(".gguf"),
-                hfModelId = meta.modelId,
-                hfFilename = meta.filename,
-                sha256 = sha,
-                sha256Verified = verified,
-                quantization = meta.quantization,
-            )
-        }, httpClient)
-        imageGalleryRepository = ImageGalleryRepository(database.generatedImageDao())
+        // Image creation was removed: free the space its downloaded models used.
+        Thread { File(filesDir, "image_models").deleteRecursively() }.start()
 
         restoreLastUsedModels()
         watchBackgroundWork()
@@ -285,16 +262,6 @@ class LlamaAiStudioApp : Application() {
                 val fits = modelRepository.estimateRamRequirementBytes(model.sizeBytes, settings.contextLength) <
                     modelRepository.availableMemoryBytes() * 0.7
                 if (fits && File(model.filePath).exists()) loadLocalModel(model.filePath)
-            }
-
-            // Checked again (not just once up front): loading the chat model above, if it
-            // happened, already spent part of the available budget.
-            imageModelRepository.getMostRecentlyUsed()?.let { model ->
-                val fits = imageModelRepository.estimateRamRequirementBytes(model.sizeBytes) <
-                    modelRepository.availableMemoryBytes() * 0.7
-                if (fits && File(model.filePath).exists()) {
-                    imageGenEngine.loadModel(model.filePath)
-                }
             }
         }
     }

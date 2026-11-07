@@ -6,12 +6,10 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,7 +32,6 @@ import com.llamaaistudio.app.ui.chat.ChatScreen
 import com.llamaaistudio.app.ui.devstudio.DevStudioScreen
 import com.llamaaistudio.app.ui.huggingface.ModelsScreen
 import com.llamaaistudio.app.ui.linux.LinuxScreen
-import com.llamaaistudio.app.ui.image.ImageGenScreen
 import com.llamaaistudio.app.ui.perf.PerformanceScreen
 import com.llamaaistudio.app.ui.sessions.SessionsScreen
 import com.llamaaistudio.app.ui.settings.SettingsScreen
@@ -46,7 +43,7 @@ const val SESSIONS_ROUTE = "sessions"
 /** The Linux terminal is reached from Dev Studio. */
 const val LINUX_ROUTE = "linux"
 
-/** Settings (OpenCode API key) — from the Models screen's ⚙ and the Image assistant. */
+/** Settings (OpenCode API key) — from the Models screen's ⚙. */
 const val SETTINGS_ROUTE = "settings"
 
 enum class StudioDestination(
@@ -57,7 +54,6 @@ enum class StudioDestination(
 ) {
     Chat("chat", "Chat", Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat),
     Web("web", "Web", Icons.Filled.Language, Icons.Outlined.Language),
-    Image("image", "Image", Icons.Filled.Image, Icons.Outlined.Image),
     Models("models", "Models", Icons.Filled.Download, Icons.Outlined.Download),
     Dev("dev", "Dev", Icons.Filled.Code, Icons.Outlined.Code),
     Perf("perf", "Perf", Icons.Filled.Speed, Icons.Outlined.Speed),
@@ -119,11 +115,6 @@ fun StudioNavHost(navController: NavHostController, app: LlamaAiStudioApp) {
         composable(StudioDestination.Web.route) {
             WebStudioScreen(app = app, onOpenLinux = {
                 navController.navigate(LINUX_ROUTE) { launchSingleTop = true }
-            })
-        }
-        composable(StudioDestination.Image.route) {
-            ImageGenScreen(app = app, onOpenSettings = {
-                navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
             })
         }
         composable(StudioDestination.Models.route) {

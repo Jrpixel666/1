@@ -23,12 +23,10 @@ a Web Studio that builds and serves websites from an idea, and a lightweight And
   output can't escape the project). Static-site and Node.js templates, a file list and code
   editor, and a **built-in web server**: one tap serves the site at `http://127.0.0.1:8080`
   with live reload — see **Web Studio's built-in server** below.
-- **Image** — fully local text-to-image generation on a vendored, pinned build of
-  stable-diffusion.cpp (`third_party/stable-diffusion.cpp`, own module: `:imagegen`).
-  Prompt/negative-prompt/steps/CFG/size controls, live per-step progress and cancel, a
-  persisted gallery (Room), and its own Hugging Face GGUF browser for diffusion
-  checkpoints. CLIP-based models only (SD1.x/2.x/SDXL/SDXL-Turbo and similar) — see
-  **Image generation scope** below for why.
+- **Model storage** — Settings → Model storage chooses where downloaded models go: app
+  storage (default), phone storage (`/sdcard/LlamaAIStudio/models`, kept after uninstall,
+  needs All files access) or a removable SD card. Existing models can be moved there, and
+  models already in the folder are picked up.
 - **Models** — Hugging Face search (`huggingface.co/api/models`), GGUF file listing with
   quantisation/param-count/size parsed from the API's own `gguf` metadata and filenames,
   resumable downloads (HTTP Range) with SHA-256 verification against HF's published LFS
@@ -85,36 +83,6 @@ automatically while cross-compiling.
 - Safety net: a marker file is written around every GPU load/generation; if the app dies
   inside the GPU driver, the next launch switches back to CPU only instead of crashing again
   on the automatic model restore, and the Performance tab explains what happened.
-
-## Image generation scope
-
-`imagegen/src/main/cpp/sd_bridge.cpp` bridges stable-diffusion.cpp as a **separate Gradle
-module with its own, fully static-linked native build** — not folded into the llama.cpp
-module's CMake tree. Two reasons:
-
-1. stable-diffusion.cpp vendors its own pinned fork of ggml (`leejet/ggml`, a different
-   commit from llama.cpp's own ggml copy). Building both inside one CMake configure would
-   define the target name `ggml` twice — a hard error.
-2. Even as two separate `add_subdirectory` calls, both forks default to building ggml as
-   *shared* libraries, which would each produce `libggml.so`/`libggml-base.so`/
-   `libggml-cpu.so` — identical filenames, silently colliding when AGP merges both
-   modules' native libs into one APK's `lib/arm64-v8a/`. `:imagegen`'s CMakeLists forces
-   `BUILD_SHARED_LIBS=OFF`, so stable-diffusion.cpp and its ggml statically link into one
-   shared object (`libsd_bridge.so`) with hidden symbol visibility — zero shared
-   intermediate libraries, zero collision surface. Verified: the shipped APK's
-   `lib/arm64-v8a/` carries both module's outputs side by side with no duplicate filenames.
-
-**Only CLIP-based diffusion models are supported** (SD1.x/2.x/SDXL/SDXL-Turbo, SDXS, and
-similar distilled/turbo checkpoints — the families that actually fit a phone). Upstream
-stable-diffusion.cpp also supports SD3/Flux/Qwen-Image-class models, whose text encoders
-(T5, UMT5, Gemma, Mistral, Qwen) embed ~137MB of vocab/merge tables as compiled-in C++
-headers (`src/tokenizers/vocab/*.hpp`) — removed entirely here (see the patch comment in
-`third_party/stable-diffusion.cpp/src/tokenizers/vocab/vocab.cpp`), both because those model
-families are multi-billion-parameter, multi-file giants no Android device can realistically
-load, and because keeping them compiled in regardless of which model you actually load would
-have bloated every build by that ~137MB for a capability this app's target hardware can't
-use. Loading a model that needs one of those encoders fails with a clear error rather than
-a crash.
 
 ## Dev Studio and ARM64
 
@@ -206,7 +174,7 @@ while you switch apps, with a **Stop all** action in its notification.
 runs Google's `.litertlm` models (Gemma, Qwen, Phi… from the LiteRT community on Hugging Face) on
 the **GPU** (OpenCL), **CPU** or **NPU**. It sits next to llama.cpp: a model loads with the engine
 its file needs (`.litertlm` → LiteRT-LM, `.gguf` → llama.cpp) and the other engine is unloaded.
-Chat, Web/Dev Studio and the Image assistant use it through `AiRouter`.
+Chat and Web/Dev Studio use it through `AiRouter`.
 
 - **Models → LiteRT-LM models** searches `litert-community`; the file list hides builds compiled
   for one specific NPU (Tensor G5/G6, Qualcomm, MediaTek, Intel) or the web, lists `-gpu` builds
@@ -226,12 +194,6 @@ to opencode.ai. The catalogue comes from `https://opencode.ai/zen/v1/models`; th
 - **Models → Discover** has two searches: on-device GGUF models (Hugging Face) and free
   OpenCode models. **Use for chat** routes Chat — and Web/Dev Studio's "build with AI" — to
   that model (`engine/AiRouter.kt`); **Use local** switches back.
-- **Image → Models** also has two searches: on-device Stable Diffusion checkpoints and free
-  OpenCode models that **accept images**. OpenCode Zen has no image-*generating* models (all
-  80 listed models output text), so the chosen one is an *image assistant*: **✨ Improve
-  prompt** rewrites your idea into a detailed prompt, and **Gallery → Edit** sends the picture
-  plus your instruction to it, gets back a new prompt, and the on-device model redraws the
-  image from the original (**img2img**, `init_image` + strength in `sd_bridge.cpp`).
 
 ## Database migrations
 

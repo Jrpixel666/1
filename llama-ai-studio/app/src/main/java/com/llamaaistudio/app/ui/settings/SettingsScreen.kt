@@ -61,7 +61,6 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
     val openCode = app.openCode
     val hasKey by openCode.hasKey.collectAsStateWithLifecycle()
     val chatModel by openCode.chatModel.collectAsStateWithLifecycle()
-    val visionModel by openCode.visionModel.collectAsStateWithLifecycle()
     var keyInput by remember { mutableStateOf("") }
     var showKey by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -96,6 +95,7 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
             modifier = Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            ModelStorageCard(app)
             settings?.let { s ->
                 EnginesCard(
                     app = app,
@@ -116,7 +116,7 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text("Cloud models (OpenRouter / OpenCode)", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Text(
-                        "Free cloud models for Chat, Web/Dev Studio and the Image assistant. Paste an OpenRouter key " +
+                        "Cloud models for Chat and Web/Dev Studio. Paste an OpenRouter key " +
                             "(sk-or-…, from openrouter.ai/keys) to use OpenRouter's models (free and paid); without a key, " +
                             "OpenCode Zen's models are used — free ones need no key. The key is encrypted on this phone (Android Keystore) and only " +
                             "sent to that service. Now using: ${openCode.providerName}.",
@@ -192,14 +192,12 @@ fun SettingsScreen(app: LlamaAiStudioApp, onBack: () -> Unit) {
                     Text("In use", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
                     Spacer(Modifier.height(4.dp))
                     Text("Chat: " + (chatModel?.let { "${openCode.providerName} · ${it.name}" } ?: "on-device model"), style = MaterialTheme.typography.bodySmall)
-                    Text("Image assistant: " + (visionModel?.let { "${openCode.providerName} · ${it.name}" } ?: "none"), style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (chatModel != null) TextButton(onClick = { openCode.selectChatModel(null) }) { Text("Chat: use local") }
-                        if (visionModel != null) TextButton(onClick = { openCode.selectVisionModel(null) }) { Text("Clear image assistant") }
                     }
                     Spacer(Modifier.width(1.dp))
                     Text(
-                        "Pick models in the Models tab (chat) and Image → Models (image assistant).",
+                        "Pick models in the Models tab.",
                         style = MaterialTheme.typography.labelSmall,
                         color = StudioTextMuted,
                     )
@@ -297,6 +295,99 @@ private fun EnginesCard(
                     Text(if (reloading) "Reloading…" else "Apply — reload model")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ModelStorageCard(app: LlamaAiStudioApp) {
+    val repo = app.modelRepository
+    val storage = repo.storage
+    val location by storage.location.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    // Re-check "All files access" when coming back from the system settings page.
+    var access by remember { mutableStateOf(storage.hasAllFilesAccess()) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) access = storage.hasAllFilesAccess()
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    val sdCard = remember { storage.sdCardRoot() }
+    fun gb(b: Long?) = b?.let { "%.1f GB free".format(it / 1e9) } ?: ""
+
+    Card(colors = CardDefaults.cardColors(containerColor = StudioPanel)) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text("Model storage", style = MaterialTheme.typography.titleMedium, color = StudioOrange)
+            Text("Where downloaded and imported models are saved.", style = MaterialTheme.typography.bodySmall, color = StudioTextMuted)
+            Spacer(Modifier.height(6.dp))
+            com.llamaaistudio.app.data.repo.ModelStorage.Location.entries.forEach { loc ->
+                val available = when (loc) {
+                    com.llamaaistudio.app.data.repo.ModelStorage.Location.SD_CARD -> sdCard != null
+                    else -> true
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = location == loc, enabled = available && !busy,
+                        onClick = {
+                            storage.set(loc)
+                            status = null
+                            if (loc != com.llamaaistudio.app.data.repo.ModelStorage.Location.PHONE || access) scope.launch {
+                                val n = repo.scanFolder()
+                                if (n > 0) status = "Found $n model${if (n == 1) "" else "s"} already in that folder."
+                            }
+                        },
+                    )
+                    Column {
+                        Text(loc.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            when (loc) {
+                                com.llamaaistudio.app.data.repo.ModelStorage.Location.APP -> "Private to the app; removed if you uninstall. ${gb(storage.freeBytes(loc))}"
+                                com.llamaaistudio.app.data.repo.ModelStorage.Location.PHONE ->
+                                    "/sdcard/LlamaAIStudio/models — visible in Files, kept after uninstall. " +
+                                        if (access) gb(storage.freeBytes(loc)) else "Needs All files access."
+                                com.llamaaistudio.app.data.repo.ModelStorage.Location.SD_CARD ->
+                                    if (sdCard == null) "No SD card inserted." else "Removable card. ${gb(storage.freeBytes(loc))}"
+                            },
+                            style = MaterialTheme.typography.labelSmall, color = StudioTextMuted,
+                        )
+                    }
+                }
+            }
+            if (location == com.llamaaistudio.app.data.repo.ModelStorage.Location.PHONE && !access) {
+                Text("Allow \"All files access\" so models can be saved and loaded from /sdcard. Until then, app storage is used.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                Button(onClick = {
+                    val intent = android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        android.net.Uri.parse("package:${context.packageName}"),
+                    )
+                    runCatching { context.startActivity(intent) }.onFailure {
+                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    }
+                }) { Text("Allow All files access") }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("Saving to: ${repo.modelsDir.absolutePath}", style = MaterialTheme.typography.labelSmall, color = StudioTextMuted)
+            OutlinedButton(
+                enabled = !busy,
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        status = runCatching {
+                            val n = repo.moveAllTo { status = "Moving $it…" }
+                            if (n == 0) "All models are already here." else "Moved $n model${if (n == 1) "" else "s"}."
+                        }.getOrElse { "Move stopped: ${it.message}" }
+                        busy = false
+                    }
+                },
+            ) { Text("Move existing models here") }
+            status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

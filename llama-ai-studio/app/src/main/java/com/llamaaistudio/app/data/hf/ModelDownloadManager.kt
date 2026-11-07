@@ -39,7 +39,7 @@ data class DownloadState(
  * [onComplete] and [destinationDir].
  */
 class ModelDownloadManager(
-    private val destinationDir: File,
+    private val destinationDir: () -> File,
     private val onComplete: suspend (file: File, meta: GgufFileOption, sha256: String?, verified: Boolean) -> Unit,
     private val client: OkHttpClient = OkHttpClient.Builder().build(),
 ) {
@@ -61,7 +61,7 @@ class ModelDownloadManager(
         val key = keyFor(file)
         if (jobs[key]?.isActive == true) return
 
-        val destFile = File(destinationDir, sanitizeFilename(file.filename))
+        val destFile = File(destinationDir(), sanitizeFilename(file.filename))
         val partFile = File(destFile.parentFile, destFile.name + ".part")
 
         _downloads.update { it + (key to DownloadState(file, destFile, partFile.length(), DownloadStatus.QUEUED)) }

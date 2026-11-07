@@ -16,4 +16,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "LlamaAIStudio"
 include(":app")
-include(":imagegen")

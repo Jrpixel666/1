@@ -2,7 +2,6 @@ package com.llamaaistudio.app.data.cloud
 
 import com.llamaaistudio.app.engine.ChatTurn
 import com.llamaaistudio.app.engine.GenerationParams
-import com.llamaaistudio.app.ui.image.ImageGenViewModel
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,19 +74,6 @@ class OpenCodeRepositoryTest {
         assertFalse(OpenCodeRepository.isFree(JSONObject("""{"text":{"input":{"price":0},"output":{"price":0.4}}}""")))
         assertFalse(OpenCodeRepository.isFree(JSONObject("{}")))
         assertFalse(OpenCodeRepository.isFree(null))
-    }
-
-    @Test
-    fun promptSuggestionsAreReadFromChattyReplies() {
-        val s = ImageGenViewModel.parseSuggestion(
-            "Sure! ```json\n{\"prompt\": \"a neon city at night, rain\", \"negative\": \"blurry\"}\n```",
-            fallbackPrompt = "x",
-        )
-        assertEquals("a neon city at night, rain", s.prompt)
-        assertEquals("blurry", s.negative)
-        val plain = ImageGenViewModel.parseSuggestion("a cat on a sofa, soft light", fallbackPrompt = "x")
-        assertEquals("a cat on a sofa, soft light", plain.prompt)
-        assertEquals("x", ImageGenViewModel.parseSuggestion("  ", fallbackPrompt = "x").prompt)
     }
 
     @Test

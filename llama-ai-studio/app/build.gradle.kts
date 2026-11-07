@@ -17,8 +17,8 @@ android {
         applicationId = "com.llamaaistudio.app"
         minSdk = 31 // Pixel 9 ships Android 14+; 31 keeps headroom for the thermal/perf APIs we rely on
         targetSdk = 35
-        versionCode = 25
-        versionName = "1.12.0"
+        versionCode = 26
+        versionName = "1.13.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -94,9 +94,9 @@ android {
             // are executables, and that directory is the only place Android lets a modern app
             // execve() files from. Uncompressed in-APK libraries can't be executed.
             useLegacyPackaging = true
-            // :app and :imagegen each independently build against ANDROID_STL=c++_shared;
-            // both contribute a byte-identical libc++_shared.so from the same NDK, which
-            // the merge step otherwise flags as a conflict.
+            // Native libraries may each bring the NDK's libc++_shared;
+            // they are byte-identical, and the merge step would otherwise flag
+            // a conflict.
             pickFirsts += "**/libc++_shared.so"
         }
     }
@@ -134,7 +134,6 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
-    implementation(project(":imagegen"))
 
     val composeBom = platform("androidx.compose:compose-bom:2024.11.00")
     implementation(composeBom)

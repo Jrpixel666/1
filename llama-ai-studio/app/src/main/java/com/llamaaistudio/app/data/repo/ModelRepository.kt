@@ -15,7 +15,48 @@ class ModelRepository(
     private val context: Context,
     private val dao: LocalModelDao,
 ) {
-    val modelsDir: File = File(context.filesDir, "models").apply { mkdirs() }
+    val storage = ModelStorage(context)
+
+    /** Where new downloads/imports go — follows the storage setting. */
+    val modelsDir: File get() = storage.currentDir()
+
+    /**
+     * Registers model files already in [dir] that the app doesn't know about (e.g. models kept on
+     * /sdcard from before a reinstall). Returns how many were added.
+     */
+    suspend fun scanFolder(dir: File = modelsDir): Int = withContext(Dispatchers.IO) {
+        val known = dao.getAll().map { it.filePath }.toSet()
+        val found = dir.listFiles { f -> f.isFile && (f.name.endsWith(".gguf") || f.name.endsWith(".litertlm")) }.orEmpty()
+            .filter { it.absolutePath !in known }
+        found.forEach { registerModel(it) }
+        found.size
+    }
+
+    /**
+     * Moves every installed model into the current storage folder, keeping its details
+     * (name, hashes, last used). [progress] gets "name (i/n)". Returns moved count.
+     */
+    suspend fun moveAllTo(dir: File = modelsDir, progress: (String) -> Unit = {}): Int = withContext(Dispatchers.IO) {
+        val models = dao.getAll().filter { File(it.filePath).parentFile?.absolutePath != dir.absolutePath && File(it.filePath).isFile }
+        var moved = 0
+        models.forEachIndexed { i, m ->
+            val src = File(m.filePath)
+            progress("${src.name} (${i + 1}/${models.size})")
+            if (dir.usableSpace < src.length() + 50L * 1024 * 1024) throw java.io.IOException("Not enough free space for ${src.name}")
+            val dest = File(dir, src.name)
+            if (!src.renameTo(dest)) {
+                val tmp = File(dir, src.name + ".moving")
+                src.inputStream().use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
+                if (tmp.length() != src.length()) { tmp.delete(); throw java.io.IOException("Copy of ${src.name} was incomplete") }
+                tmp.renameTo(dest)
+                src.delete()
+            }
+            dao.upsert(m.copy(filePath = dest.absolutePath))
+            dao.delete(m.filePath)
+            moved++
+        }
+        moved
+    }
 
     val installedModels: Flow<List<LocalModelEntity>> = dao.observeAll()
 

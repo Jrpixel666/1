@@ -11,7 +11,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.llamaaistudio.app.engine.GenerationParams
 import com.llamaaistudio.app.engine.CpuTopology
 import com.llamaaistudio.app.engine.ModelLoadParams
-import com.llamaaistudio.imagegen.ImageGenParams
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -42,7 +41,6 @@ data class StudioSettings(
     val useMlock: Boolean,
     val lastChatSessionId: Long?,
     val chatParams: GenerationParams,
-    val imageParams: ImageGenParams,
 ) {
     /** Exactly what a model load should use, derived from these settings. */
     fun loadParams(): ModelLoadParams = ModelLoadParams(
@@ -80,15 +78,10 @@ class SettingsRepository(private val context: Context) {
         val CHAT_REPEAT_PENALTY = floatPreferencesKey("chat_repeat_penalty")
         val CHAT_MAX_TOKENS = intPreferencesKey("chat_max_tokens")
 
-        val IMAGE_STEPS = intPreferencesKey("image_steps")
-        val IMAGE_CFG_SCALE = floatPreferencesKey("image_cfg_scale")
-        val IMAGE_WIDTH = intPreferencesKey("image_width")
-        val IMAGE_HEIGHT = intPreferencesKey("image_height")
     }
 
     val settings: Flow<StudioSettings> = context.settingsDataStore.data.map { prefs ->
         val defaultChat = GenerationParams()
-        val defaultImage = ImageGenParams()
         StudioSettings(
             threads = prefs[Keys.THREADS] ?: CpuTopology.performanceCores,
             threadsBatch = prefs[Keys.THREADS_BATCH] ?: CpuTopology.totalCores,
@@ -110,12 +103,6 @@ class SettingsRepository(private val context: Context) {
                 topP = prefs[Keys.CHAT_TOP_P] ?: defaultChat.topP,
                 minP = prefs[Keys.CHAT_MIN_P] ?: defaultChat.minP,
                 repeatPenalty = prefs[Keys.CHAT_REPEAT_PENALTY] ?: defaultChat.repeatPenalty,
-            ),
-            imageParams = ImageGenParams(
-                width = prefs[Keys.IMAGE_WIDTH] ?: defaultImage.width,
-                height = prefs[Keys.IMAGE_HEIGHT] ?: defaultImage.height,
-                steps = prefs[Keys.IMAGE_STEPS] ?: defaultImage.steps,
-                cfgScale = prefs[Keys.IMAGE_CFG_SCALE] ?: defaultImage.cfgScale,
             ),
         )
     }
@@ -199,12 +186,4 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setImageParams(params: ImageGenParams) {
-        context.settingsDataStore.edit {
-            it[Keys.IMAGE_WIDTH] = params.width
-            it[Keys.IMAGE_HEIGHT] = params.height
-            it[Keys.IMAGE_STEPS] = params.steps
-            it[Keys.IMAGE_CFG_SCALE] = params.cfgScale
-        }
-    }
 }
